@@ -1,0 +1,24 @@
+E:\nauv\scholarship_pred\.venv\Scripts\python.exe E:\nauv\scholarship_pred\data_prep.py 
+Всего строк:                     155,295
+  в т.ч. regular-семестры:       155,295
+Уникальных студентов:              5,933
+Уникальных учебных планов:           345
+
+Завершивших программу:             1,852
+  Бакалавриат                      1,565
+  Специалитет                        287
+
+Всего пар (сем N, сем N+1):       11,508
+  распределение по from_sem → to_sem:
+from_sem  to_sem
+1         2         2470
+2         3         1076
+3         4         2040
+4         5          987
+5         6         1851
+6         7          866
+7         8         1807
+8         9          126
+9         10         285
+
+Process finished with exit code 0
