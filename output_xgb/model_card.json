@@ -1,0 +1,58 @@
+{
+  "model_type": "XGBClassifier",
+  "target": "scholarship next semester (yes/no)",
+  "features": [
+    "sem_num",
+    "n_subjects",
+    "n_blocks",
+    "n_retakes",
+    "any_block",
+    "any_retake",
+    "gpa_overall",
+    "min_grade",
+    "std_grade",
+    "share_5",
+    "share_3",
+    "share_zachet",
+    "prev_scholarship"
+  ],
+  "n_features": 13,
+  "n_train": 9177,
+  "n_test": 2331,
+  "best_iteration": 350,
+  "metrics": {
+    "accuracy": 0.8366,
+    "f1_macro": 0.8359,
+    "roc_auc": 0.9203
+  },
+  "baselines": {
+    "majority": {
+      "accuracy": 0.5543,
+      "description": "Always predict 0"
+    },
+    "persistence": {
+      "accuracy": 0.7495,
+      "description": "Predict next = prev_scholarship"
+    },
+    "rule_no_blocking": {
+      "accuracy": 0.8331,
+      "description": "No blocking grades & no retakes → scholarship"
+    },
+    "gpa_4.0": {
+      "accuracy": 0.8078,
+      "description": "GPA ≥ 4.0 → scholarship"
+    },
+    "gpa_4.2": {
+      "accuracy": 0.828,
+      "description": "GPA ≥ 4.2 → scholarship"
+    }
+  },
+  "variant_b_accuracy": {
+    "1": 0.9612,
+    "2": 0.5379,
+    "3": 0.3519,
+    "4": 0.946
+  },
+  "random_seed": 42,
+  "date": "2026-05-15T07:29:39.517180"
+}

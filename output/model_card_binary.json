@@ -1,0 +1,23 @@
+{
+  "model_type": "CatBoostClassifier (binary)",
+  "target": "pass (4+) vs fail (3-) in Математический анализ, semester 2",
+  "features_used": "ONLY from Математический анализ semester 1",
+  "features": [
+    "ma_grade_sem1",
+    "ma_control_type",
+    "ma_retake",
+    "ma_commission",
+    "plan"
+  ],
+  "n_train": 434,
+  "n_test": 109,
+  "best_iteration": 1,
+  "metrics": {
+    "accuracy": 0.6697,
+    "f1_pass": 0.7391,
+    "f1_macro": 0.6446,
+    "roc_auc": 0.7249
+  },
+  "random_seed": 42,
+  "date": "2026-05-07T09:00:48.698878"
+}
