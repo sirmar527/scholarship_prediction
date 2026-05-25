@@ -1,14 +1,12 @@
 # Scholarship Prediction
 
-**EN.** Machine-learning pipelines that forecast whether a Russian-university student will keep a clean academic record in the next semester, which under standard rules entitles them to a stipend the semester after. Built on anonymised grade-level data conforming to **ГОСТ Р 70946-2023, Приложение 8**. Two canonical models are kept side-by-side (XGBoost and sklearn HistGradientBoosting); a separate clustering tool reconstructs ФГОС block structure from grade data.
+**EN.** Machine-learning pipelines that forecast whether a Russian-university student will keep a clean academic record in the next semester, which under standard rules entitles them to a stipend the semester after. Built on anonymised grade-level data conforming to **ГОСТ Р 70946-2023, Приложение 8**. Two canonical models are kept side-by-side: XGBoost and sklearn HistGradientBoosting.
 
 ---
 
 ## Что это
 
 Проект предсказывает, **сохранит ли студент «чистую успеваемость» в следующем семестре** (без блокирующих оценок и пересдач). По правилам в РФ чистый семестр N+1 даёт право на стипендию в N+2, то есть модель работает как **раннее предупреждение за один семестр вперёд**: признаки берутся из сем. N, целевая переменная это состояние в сем. N+1.
-
-Помимо предсказательной модели в репозитории есть кластеризатор учебных планов (`classify_fgos.py`), реконструирующий структуру ФГОС из данных об оценках.
 
 ## Структура проекта
 
@@ -19,16 +17,14 @@ scholarship_pred/
 │   └── output_bachelors_*.xlsx
 ├── outputs/                               # результаты моделей
 │   ├── xgb/             канонический XGBoost
-│   ├── histgb/          канонический HistGradientBoosting
-│   └── fgos/            кластеры учебных планов
+│   └── histgb/          канонический HistGradientBoosting
 ├── scholarship_predict_xgb.py             # канонический XGBoost
 ├── scholarship_predict_histgb.py          # канонический HistGradientBoosting
-├── classify_fgos.py                       # кластеризация учебных планов
 ├── CHANGELOG.md                           # история патчей XGB-модели
 └── README.md
 ```
 
-Старые варианты моделей (CatBoost в трёх конфигурациях, sklearn-зоопарк, baseline по матанализу, TabPFN) и их выводы лежат локально в `legacy/` и `outputs/legacy/`. Эти папки добавлены в `.gitignore` и не входят в репозиторий.
+Старые варианты моделей (CatBoost в трёх конфигурациях, sklearn-зоопарк, baseline по матанализу, TabPFN, кластеризатор ФГОС `classify_fgos.py`) и их выводы лежат локально в `legacy/` и `outputs/legacy/`. Эти папки добавлены в `.gitignore` и не входят в репозиторий.
 
 ## Данные
 
@@ -92,7 +88,6 @@ scholarship_pred/
 |---|---|---|
 | `scholarship_predict_xgb.py` | **XGBoost**: early stopping, разбиение по студентам | `outputs/xgb/` |
 | `scholarship_predict_histgb.py` | **HistGradientBoosting** (sklearn, аналог LightGBM): нативный NaN, permutation importance | `outputs/histgb/` |
-| `classify_fgos.py` | Кластеризация учебных планов в направления ФГОС | `outputs/fgos/` |
 
 Технические различия между XGB и HistGB описаны в docstring каждого скрипта.
 
@@ -109,12 +104,7 @@ python scholarship_predict_histgb.py
 
 # С нестандартными путями
 python scholarship_predict_xgb.py --data path/to/file.xlsx --output путь/к/результатам/
-
-# Кластеризация ФГОС
-python classify_fgos.py
 ```
-
-После прогона `classify_fgos.py` рекомендуется вручную проверить `outputs/fgos/block_mapping.csv` и затем запускать предсказательные модели с ключом `--blocks block_mapping.csv` (если поддерживается).
 
 ## Зависимости
 
