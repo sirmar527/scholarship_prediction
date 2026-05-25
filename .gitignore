@@ -13,3 +13,7 @@ venv/
 
 # ML training artifacts
 catboost_info/
+
+# Legacy (non-canonical) models and their outputs
+legacy/
+outputs/legacy/
