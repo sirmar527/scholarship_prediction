@@ -1,5 +1,5 @@
 """
-Scholarship Prediction — XGBoost Pipeline.
+Scholarship Prediction - XGBoost Pipeline.
 
 Predicts the probability that a student will maintain a CLEAN ACADEMIC
 RECORD in the next semester (no blocking grades, no retakes), based on
@@ -7,12 +7,10 @@ their performance in the current semester.
 
 Note on terminology: under standard Russian academic rules the scholarship
 a student receives IN semester N+1 is determined by their performance IN
-semester N — so a clean record in N+1 entitles the student to the stipend
+semester N - so a clean record in N+1 entitles the student to the stipend
 paid in N+2. This pipeline is therefore a ONE-SEMESTER-AHEAD early-warning
 forecast: features come from sem N, the target is "clean record in N+1"
-(which would entitle the student to a stipend in N+2). The earlier name
-"target_scholarship" was misleading because the stipend paid in N+1 is
-already deterministic from sem N's features (it equals had_clean_current_sem).
+(which would entitle the student to a stipend in N+2).
 
 Uses XGBoost with student-level train/test split and early stopping.
 """
@@ -89,7 +87,7 @@ DEDUP_PRIORITY_DEFAULT = 4  # for any ВидКонтроля not listed above
 
 # Types of ведомость we keep alongside Основная:
 #   - Перезачет: transferred credits from prior education; treated as
-#     passed prior work — counted in subject load and GPA but NEVER
+#     passed prior work - counted in subject load and GPA but NEVER
 #     scholarship-blocking and NEVER a retake event.
 #   - Пересдача / Пересдача с комиссией: in this dataset, retake events
 #     are usually duplicated as separate rows alongside the Основная row
@@ -170,7 +168,7 @@ def load_data(path=None):
     )
     # Score columns (Пересдача, Комиссия, Экзамен): 100-point scale.
     # For retake columns, value > 0 means the retake was taken and scored;
-    # value == 0 is AMBIGUOUS — either no retake was scheduled, OR a retake
+    # value == 0 is AMBIGUOUS - either no retake was scheduled, OR a retake
     # was scheduled but the student did not show up. The no-show case is
     # identified by ИтоговаяОтметка == "Неявка" (in this dataset, Неявка as
     # a final mark only occurs at Пересдача/Комиссия stage, never at the
@@ -265,7 +263,7 @@ def build_features(df):
     overall = overall.merge(gpa_stats, on=key, how="left")
 
     # ── share_5, share_3: computed from the numeric grade after dedup ──
-    # (NOT from the surviving row's text label — those can disagree because
+    # (NOT from the surviving row's text label - those can disagree because
     # disc_min_grade overwrites grade_num while ИтоговаяОтметка is left
     # alone.)
     graded_per_key = df_graded.groupby(key).size()
@@ -286,7 +284,7 @@ def build_features(df):
     # clean_record = 1 iff the student had no blocking grades and no retakes
     # in this semester. Under standard Russian academic rules, a clean record
     # in semester N entitles the student to the stipend paid in semester N+1.
-    # NOTE: no sem_1 override — first-semester students with blocking grades
+    # NOTE: no sem_1 override - first-semester students with blocking grades
     # genuinely did not have a clean record.
     overall["clean_record"] = 0
     overall.loc[
@@ -371,10 +369,10 @@ def _prepare_features(pairs_df):
     """Return feature matrix, target vector, and feature column names.
 
     NaN values are LEFT IN PLACE for numeric features: XGBoost handles them
-    natively by learning the optimal split direction at each node. The
-    previous code force-filled all NaNs with 0, which created impossible
-    GPA / min_grade values (0 on a 2-5 scale) for the 76 student-semesters
-    that only contain pass/fail Зачет subjects.
+    natively by learning the optimal split direction at each node. Do not
+    fillna(0) for GPA / min_grade - 0 is not a valid value on the 2-5 grade
+    scale, and student-semesters that only contain pass/fail Зачет subjects
+    legitimately have NaN here.
     """
     feature_cols = [c for c in pairs_df.columns if c not in EXCLUDE_COLS]
 
@@ -391,7 +389,7 @@ def _prepare_features(pairs_df):
 
 
 def _split_by_students(pairs_df, seed=42):
-    """80/20 split by student ID — same students never appear in both sets."""
+    """80/20 split by student ID - same students never appear in both sets."""
     unique_students = pairs_df["ЗачетнаяКнижка"].unique()
     rng = np.random.RandomState(seed)
     rng.shuffle(unique_students)
@@ -587,7 +585,7 @@ def evaluate_and_save(
     print(cm_df.to_string())
 
     # ── 4-class metrics ──
-    print(f"\nVariant B — 4 класса:")
+    print(f"\nVariant B - 4 класса:")
     cm_b = confusion_matrix(true_b_test, pred_b, labels=[1, 2, 3, 4])
     cm_b_df = pd.DataFrame(
         cm_b,
@@ -702,7 +700,7 @@ def evaluate_and_save(
     # ── Save summary ──
     summary_path = output_dir / "summary.md"
     with open(summary_path, "w", encoding="utf-8") as f:
-        f.write("# Scholarship Prediction — XGBoost\n\n")
+        f.write("# Scholarship Prediction - XGBoost\n\n")
         f.write(f"**Дата:** {datetime.now().strftime('%Y-%m-%d %H:%M')}\n\n")
 
         f.write("## Данные\n\n")
@@ -737,7 +735,7 @@ def evaluate_and_save(
             f"```\n{cm_df.to_string()}\n```\n\n"
         )
         f.write(
-            f"## Variant B — 4 класса\n\n"
+            f"## Variant B - 4 класса\n\n"
             f"```\n{cm_b_df.to_string()}\n```\n\n"
         )
         f.write("## Per-class accuracy\n\n")
@@ -879,7 +877,7 @@ def _save_human_report(
     w("> большинства российских вузов чистый результат в семестре N+1 даёт ")
     w("> право на стипендию, выплачиваемую в семестре N+2 (стипендия в N+1 ")
     w("> уже определяется результатами текущего семестра N и не нуждается ")
-    w("> в прогнозе). Поэтому модель — это раннее предупреждение на ")
+    w("> в прогнозе). Поэтому модель - это раннее предупреждение на ")
     w("> один семестр вперёд.\n")
 
     # ── Section 2: Data scope ──
@@ -917,7 +915,7 @@ def _save_human_report(
     for cls in [1, 2, 3, 4]:
         if cls in class_b_accuracies:
             w(
-                f"- {cls}. **{CLASS_B_LABELS[cls]}** — модель угадывает "
+                f"- {cls}. **{CLASS_B_LABELS[cls]}** - модель угадывает "
                 f"**{class_b_accuracies[cls]:.0%}** таких случаев"
             )
     w("")
@@ -943,21 +941,21 @@ def _save_human_report(
         "Модель присваивает каждому переходу вероятность того, что следующий семестр "
         "окажется чистым (от 0% до 100%). На основе этой вероятности студенты "
         "делятся на группы. **Важно:** интерпретация риска зависит от того, "
-        "был ли чистым текущий семестр — для тех, кто и сейчас не имеет права "
+        "был ли чистым текущий семестр - для тех, кто и сейчас не имеет права "
         "на стипендию (had_clean=0), низкая вероятность означает «не восстановится», "
         "а не «потеряет».\n"
     )
     w(
         f"- **Высокий риск** (вероятность < 30%): **{high_risk:,}** студентов "
-        f"({high_risk / n_test:.0%}) — рекомендуется обратить внимание"
+        f"({high_risk / n_test:.0%}) - рекомендуется обратить внимание"
     )
     w(
-        f"- **Средний риск** (30%–60%): **{medium_risk:,}** студентов "
-        f"({medium_risk / n_test:.0%}) — стоит мониторить"
+        f"- **Средний риск** (30%-60%): **{medium_risk:,}** студентов "
+        f"({medium_risk / n_test:.0%}) - стоит мониторить"
     )
     w(
         f"- **Низкий риск** (> 60%): **{low_risk:,}** студентов "
-        f"({low_risk / n_test:.0%}) — ситуация стабильная"
+        f"({low_risk / n_test:.0%}) - ситуация стабильная"
     )
     w("")
 
@@ -971,7 +969,7 @@ def _save_human_report(
         feat = row["feature"]
         desc = FEATURE_DESCRIPTIONS.get(feat, feat)
         pct = row["importance"] * 100
-        w(f"{rank}. **{desc}** — вес {pct:.1f}%")
+        w(f"{rank}. **{desc}** - вес {pct:.1f}%")
     w("")
 
     report_path = output_dir / "report_human.md"
@@ -987,7 +985,7 @@ def _save_human_report(
 # =====================================================================
 def main():
     parser = argparse.ArgumentParser(
-        description="Scholarship Prediction — XGBoost Pipeline"
+        description="Scholarship Prediction - XGBoost Pipeline"
     )
     parser.add_argument("--data", type=str, default=None, help="Путь к xlsx-файлу")
     parser.add_argument(
@@ -999,7 +997,7 @@ def main():
     args = parser.parse_args()
 
     print(f"{'=' * 70}")
-    print(f"  Scholarship Prediction — XGBoost Pipeline")
+    print(f"  Scholarship Prediction - XGBoost Pipeline")
     print(f"{'=' * 70}\n")
 
     df = load_data(args.data)
