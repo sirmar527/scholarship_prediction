@@ -1,22 +1,24 @@
 """
 Scholarship Prediction — XGBoost Pipeline.
 
-Predicts whether a student will have a scholarship next semester
-based on current semester performance. Uses XGBoost with
-student-level train/test split and early stopping.
+Predicts the probability that a student will maintain a CLEAN ACADEMIC
+RECORD in the next semester (no blocking grades, no retakes), based on
+their performance in the current semester.
 
-Запуск:
-    python scholarship_predict_xgb.py
-    python scholarship_predict_xgb.py --data path/to/file.xlsx
-    python scholarship_predict_xgb.py --data path/to/file.xlsx --output results/
+Note on terminology: under standard Russian academic rules the scholarship
+a student receives IN semester N+1 is determined by their performance IN
+semester N — so a clean record in N+1 entitles the student to the stipend
+paid in N+2. This pipeline is therefore a ONE-SEMESTER-AHEAD early-warning
+forecast: features come from sem N, the target is "clean record in N+1"
+(which would entitle the student to a stipend in N+2). The earlier name
+"target_scholarship" was misleading because the stipend paid in N+1 is
+already deterministic from sem N's features (it equals had_clean_current_sem).
 
-Зависимости:
-    pip install pandas numpy scikit-learn xgboost openpyxl
+Uses XGBoost with student-level train/test split and early stopping.
 """
 
 import argparse
 import json
-import warnings
 from datetime import datetime
 from pathlib import Path
 
@@ -31,8 +33,6 @@ from sklearn.metrics import (
     roc_auc_score,
 )
 from sklearn.utils.class_weight import compute_sample_weight
-
-warnings.filterwarnings("ignore")
 
 # =====================================================================
 # CONSTANTS
@@ -64,11 +64,45 @@ SCHOLARSHIP_BLOCKING_GRADES = {
     "Не зачтено",
     "Неявка",
 }
+# Pass/fail subjects do NOT contribute to GPA. They are identified by
+# ВидКонтроля == "Зачет" (universally pass/fail in Russian higher ed).
+# PASS_FAIL_GRADES is kept as a defensive secondary check in case future
+# data has anomalous control-type / grade combinations.
+PASS_FAIL_CONTROL_TYPES = {"Зачет"}
+PASS_FAIL_GRADES = {"Зачтено", "Не зачтено"}
+
+# Dedup priority: when one discipline has multiple component rows
+# (e.g. an Экзамен + a Курсовая работа), the surviving row is the one
+# with the lowest priority value. Graded coursework outranks pure pass/fail
+# Зачет; this matters because the surviving row's text label feeds into
+# share_5 / share_3 computations.
+DEDUP_PRIORITY = {
+    "Экзамен": 0,
+    "Зачет с оценкой": 1,
+    "Курсовая работа": 2,
+    "Курсовой проект": 2,
+    "ГАК": 2,
+    "Защита ВКР": 2,
+    "Зачет": 3,
+}
+DEDUP_PRIORITY_DEFAULT = 4  # for any ВидКонтроля not listed above
+
+# Types of ведомость we keep alongside Основная:
+#   - Перезачет: transferred credits from prior education; treated as
+#     passed prior work — counted in subject load and GPA but NEVER
+#     scholarship-blocking and NEVER a retake event.
+#   - Пересдача / Пересдача с комиссией: in this dataset, retake events
+#     are usually duplicated as separate rows alongside the Основная row
+#     they update. We drop those duplicates and KEEP only orphan retake
+#     rows (no Основная partner for that student/sem/discipline).
+KEPT_VEDOMOST_TYPES = {"Основная", "Перезачет", "Пересдача", "Пересдача с комиссией"}
+RETAKE_VEDOMOST_TYPES = {"Пересдача", "Пересдача с комиссией"}
+
 CLASS_B_LABELS = {
-    1: "Была→сохранил",
-    2: "Была→потерял",
-    3: "Не было→получил",
-    4: "Не было→нет",
+    1: "Чисто→чисто",
+    2: "Чисто→провал",
+    3: "Провал→чисто",
+    4: "Провал→провал",
 }
 
 DATA_FILE_PATTERNS = [
@@ -108,13 +142,53 @@ def load_data(path=None):
     df["sem_num"] = df["ПериодКонтроля"].map(SEMESTER_MAP)
     df = df[df["sem_num"].notna()].copy()
     df["sem_num"] = df["sem_num"].astype(int)
-    df = df[(df["ФормаОбучения"] == "Очная") & (df["ТипВедомости"] == "Основная")]
+    df = df[df["ФормаОбучения"] == "Очная"]
+
+    # Keep Основная, Перезачет, and retake-type rows (filtered further below).
+    df = df[df["ТипВедомости"].isin(KEPT_VEDOMOST_TYPES)].copy()
+
+    # Drop retake rows that DUPLICATE an Основная row for the same
+    # (student, sem, discipline). In this dataset such duplicates carry the
+    # same final mark and score columns; keeping them would double-count.
+    osn_keys = set(
+        zip(
+            df.loc[df["ТипВедомости"] == "Основная", "ЗачетнаяКнижка"],
+            df.loc[df["ТипВедомости"] == "Основная", "sem_num"],
+            df.loc[df["ТипВедомости"] == "Основная", "Дисциплина"],
+        )
+    )
+    is_retake_row = df["ТипВедомости"].isin(RETAKE_VEDOMOST_TYPES)
+    keys = list(zip(df["ЗачетнаяКнижка"], df["sem_num"], df["Дисциплина"]))
+    has_osn_partner = pd.Series([k in osn_keys for k in keys], index=df.index)
+    drop_mask = is_retake_row & has_osn_partner
+    if drop_mask.any():
+        df = df[~drop_mask].copy()
 
     df["grade_num"] = df["ИтоговаяОтметка"].map(GRADE_MAP)
     df["is_scholarship_blocking"] = (
         df["ИтоговаяОтметка"].isin(SCHOLARSHIP_BLOCKING_GRADES).astype(int)
     )
-    df["has_retake"] = ((df["Пересдача"] > 0) | (df["Комиссия"] > 0)).astype(int)
+    # Score columns (Пересдача, Комиссия, Экзамен): 100-point scale.
+    # For retake columns, value > 0 means the retake was taken and scored;
+    # value == 0 is AMBIGUOUS — either no retake was scheduled, OR a retake
+    # was scheduled but the student did not show up. The no-show case is
+    # identified by ИтоговаяОтметка == "Неявка" (in this dataset, Неявка as
+    # a final mark only occurs at Пересдача/Комиссия stage, never at the
+    # original exam). Therefore retake events must be detected as:
+    df["has_retake"] = (
+        (df["Пересдача"] > 0)
+        | (df["Комиссия"] > 0)
+        | (df["ИтоговаяОтметка"] == "Неявка")
+    ).astype(int)
+    # Orphan retake-type rows are themselves a retake event by construction.
+    df.loc[df["ТипВедомости"].isin(RETAKE_VEDOMOST_TYPES), "has_retake"] = 1
+
+    # Перезачет = transferred prior credits. By Option 1 convention,
+    # they NEVER block scholarship and NEVER count as a retake event,
+    # but their grades DO contribute to GPA and they count in n_subjects.
+    perezachet_mask = df["ТипВедомости"] == "Перезачет"
+    df.loc[perezachet_mask, "is_scholarship_blocking"] = 0
+    df.loc[perezachet_mask, "has_retake"] = 0
 
     print(f"  → {len(df):,} записей, {df['ЗачетнаяКнижка'].nunique():,} студентов")
     return df
@@ -126,7 +200,6 @@ def load_data(path=None):
 def build_features(df):
     print(f"[2/5] Построение признаков...")
 
-    priority = {"Экзамен": 0, "Зачет с оценкой": 1, "Зачет": 2}
     df = df.copy()
 
     disc_key = ["ЗачетнаяКнижка", "Дисциплина", "sem_num"]
@@ -140,7 +213,7 @@ def build_features(df):
         .reset_index()
     )
 
-    df["_prio"] = df["ВидКонтроля"].map(priority).fillna(3)
+    df["_prio"] = df["ВидКонтроля"].map(DEDUP_PRIORITY).fillna(DEDUP_PRIORITY_DEFAULT)
     df = df.sort_values(
         ["ЗачетнаяКнижка", "Дисциплина", "sem_num", "_prio", "grade_num"]
     )
@@ -157,40 +230,68 @@ def build_features(df):
 
     key = ["ЗачетнаяКнижка", "sem_num"]
 
+    # ── Split: graded subjects vs pass/fail ──
+    # Classify by ВидКонтроля (universal rule); PASS_FAIL_GRADES kept as a
+    # defensive secondary check.
+    is_pass_fail = (
+        df["ВидКонтроля"].isin(PASS_FAIL_CONTROL_TYPES)
+        | df["ИтоговаяОтметка"].isin(PASS_FAIL_GRADES)
+    )
+    df_graded = df[~is_pass_fail]
+
+    # ── Aggregate over ALL subjects (counts, blocking, retakes) ──
     overall = (
         df.groupby(key)
         .agg(
             n_subjects=("Дисциплина", "nunique"),
-            gpa_overall=("grade_num", "mean"),
-            min_grade=("grade_num", "min"),
-            std_grade=("grade_num", "std"),
             n_blocks=("is_scholarship_blocking", "sum"),
             n_retakes=("has_retake", "sum"),
             any_block=("is_scholarship_blocking", "max"),
             any_retake=("has_retake", "max"),
-            УчебныйПлан=("УчебныйПлан", "first"),
         )
         .reset_index()
     )
 
+    # ── GPA stats from graded subjects only (excluding pass/fail Зачет) ──
+    gpa_stats = (
+        df_graded.groupby(key)
+        .agg(
+            gpa_overall=("grade_num", "mean"),
+            min_grade=("grade_num", "min"),
+            std_grade=("grade_num", "std"),
+        )
+        .reset_index()
+    )
+    overall = overall.merge(gpa_stats, on=key, how="left")
+
+    # ── share_5, share_3: computed from the numeric grade after dedup ──
+    # (NOT from the surviving row's text label — those can disagree because
+    # disc_min_grade overwrites grade_num while ИтоговаяОтметка is left
+    # alone.)
+    graded_per_key = df_graded.groupby(key).size()
+    share_5 = df_graded[df_graded["grade_num"] == 5].groupby(key).size() / graded_per_key
+    share_3 = df_graded[df_graded["grade_num"] == 3].groupby(key).size() / graded_per_key
+
+    # ── share_zachet: fraction of pass/fail subjects in total load ──
     total_per_key = df.groupby(key).size()
-    share_5 = (
-        df[df["ИтоговаяОтметка"] == "Отлично"].groupby(key).size() / total_per_key
-    )
-    share_3 = (
-        df[df["ИтоговаяОтметка"] == "Удовлетворительно"].groupby(key).size()
-        / total_per_key
-    )
+    zachet_per_key = df[is_pass_fail].groupby(key).size()
+    share_zachet = zachet_per_key / total_per_key
+
     overall = overall.set_index(key)
     overall["share_5"] = share_5.reindex(overall.index).fillna(0)
     overall["share_3"] = share_3.reindex(overall.index).fillna(0)
+    overall["share_zachet"] = share_zachet.reindex(overall.index).fillna(0)
     overall = overall.reset_index()
 
-    overall["scholarship"] = 0
+    # clean_record = 1 iff the student had no blocking grades and no retakes
+    # in this semester. Under standard Russian academic rules, a clean record
+    # in semester N entitles the student to the stipend paid in semester N+1.
+    # NOTE: no sem_1 override — first-semester students with blocking grades
+    # genuinely did not have a clean record.
+    overall["clean_record"] = 0
     overall.loc[
-        (overall["any_block"] == 0) & (overall["any_retake"] == 0), "scholarship"
+        (overall["any_block"] == 0) & (overall["any_retake"] == 0), "clean_record"
     ] = 1
-    overall.loc[overall["sem_num"] == 1, "scholarship"] = 1
 
     print(
         f"  → {len(overall):,} (студент, семестр) строк, "
@@ -214,15 +315,16 @@ def build_pairs(features_df):
         for i in range(len(sems) - 1):
             if sems[i + 1] - sems[i] == 1:
                 current = grp[grp["sem_num"] == sems[i]].iloc[0].to_dict()
-                next_sch = grp[grp["sem_num"] == sems[i + 1]].iloc[0]["scholarship"]
-                current["target_scholarship"] = int(next_sch)
+                next_clean = grp[grp["sem_num"] == sems[i + 1]].iloc[0]["clean_record"]
+                current["target_clean_next_sem"] = int(next_clean)
                 current["target_sem"] = int(sems[i + 1])
-                current["prev_scholarship"] = int(current["scholarship"])
+                current["had_clean_current_sem"] = int(current["clean_record"])
                 pairs_list.append(current)
 
     pairs_df = pd.DataFrame(pairs_list)
 
     def variant_b(p, n):
+        # p = had clean record in current sem, n = clean record in next sem
         if p == 1 and n == 1:
             return 1
         if p == 1 and n == 0:
@@ -233,13 +335,15 @@ def build_pairs(features_df):
 
     pairs_df["class_B"] = [
         variant_b(p, n)
-        for p, n in zip(pairs_df["prev_scholarship"], pairs_df["target_scholarship"])
+        for p, n in zip(
+            pairs_df["had_clean_current_sem"], pairs_df["target_clean_next_sem"]
+        )
     ]
 
     print(f"  → {len(pairs_df):,} пар")
     print(
-        f"  Стипендия в след. семестре: "
-        f"{pairs_df['target_scholarship'].mean():.1%}"
+        f"  Чистый академический результат в след. семестре: "
+        f"{pairs_df['target_clean_next_sem'].mean():.1%}"
     )
     for cls in [1, 2, 3, 4]:
         cnt = (pairs_df["class_B"] == cls).sum()
@@ -256,24 +360,32 @@ def build_pairs(features_df):
 # =====================================================================
 EXCLUDE_COLS = {
     "ЗачетнаяКнижка",
-    "target_scholarship",
+    "target_clean_next_sem",
     "target_sem",
     "class_B",
-    "УчебныйПлан",
-    "scholarship",
+    "clean_record",
 }
 
 
 def _prepare_features(pairs_df):
-    """Return feature matrix, target vector, and feature column names."""
+    """Return feature matrix, target vector, and feature column names.
+
+    NaN values are LEFT IN PLACE for numeric features: XGBoost handles them
+    natively by learning the optimal split direction at each node. The
+    previous code force-filled all NaNs with 0, which created impossible
+    GPA / min_grade values (0 on a 2-5 scale) for the 76 student-semesters
+    that only contain pass/fail Зачет subjects.
+    """
     feature_cols = [c for c in pairs_df.columns if c not in EXCLUDE_COLS]
 
     X = pairs_df[feature_cols].copy()
-    y = pairs_df["target_scholarship"].astype(int)
+    y = pairs_df["target_clean_next_sem"].astype(int)
 
-    for col in X.columns:
-        if X[col].isna().any():
-            X[col] = X[col].fillna(0)
+    # std_grade is genuinely undefined for single-graded-subject semesters
+    # (n=1 → std is mathematically undefined). Filling with 0 is fine here:
+    # a single value has zero variance.
+    if "std_grade" in X.columns:
+        X["std_grade"] = X["std_grade"].fillna(0)
 
     return X, y, feature_cols
 
@@ -299,9 +411,6 @@ def train_model(pairs_df):
     X, y, feature_cols = _prepare_features(pairs_df)
     train_mask, test_mask, train_students, test_students = _split_by_students(pairs_df)
 
-    X_train, y_train = X[train_mask].values, y[train_mask].values
-    X_test, y_test = X[test_mask].values, y[test_mask].values
-
     # ── Carve validation set from train for early stopping ──
     train_students_list = list(train_students)
     rng = np.random.RandomState(123)
@@ -320,7 +429,7 @@ def train_model(pairs_df):
 
     print(f"  Fit:  {len(X_fit):,} пар ({len(fit_students):,} студентов)")
     print(f"  Val:  {len(X_val):,} пар ({len(val_students):,} студентов)")
-    print(f"  Test: {len(X_test):,} пар ({len(test_students):,} студентов)")
+    print(f"  Test: {test_mask.sum():,} пар ({len(test_students):,} студентов)")
     print(f"  Признаков: {len(feature_cols)}")
     print(f"  Feature list: {feature_cols}")
 
@@ -358,15 +467,15 @@ def train_model(pairs_df):
 # =====================================================================
 def _run_baselines(pairs_df, test_mask):
     """Compute simple baselines on the test set for comparison."""
-    y_test = pairs_df.loc[test_mask, "target_scholarship"].values
-    prev_test = pairs_df.loc[test_mask, "prev_scholarship"].values
+    y_test = pairs_df.loc[test_mask, "target_clean_next_sem"].values
+    prev_test = pairs_df.loc[test_mask, "had_clean_current_sem"].values
     gpa_test = pairs_df.loc[test_mask, "gpa_overall"].values
     any_block_test = pairs_df.loc[test_mask, "any_block"].values
     any_retake_test = pairs_df.loc[test_mask, "any_retake"].values
 
     baselines = {}
 
-    majority_cls = int(pairs_df.loc[~test_mask, "target_scholarship"].mode()[0])
+    majority_cls = int(pairs_df.loc[~test_mask, "target_clean_next_sem"].mode()[0])
     pred_majority = np.full_like(y_test, majority_cls)
     baselines["majority"] = {
         "pred": pred_majority,
@@ -375,23 +484,24 @@ def _run_baselines(pairs_df, test_mask):
 
     baselines["persistence"] = {
         "pred": prev_test.copy(),
-        "desc": "Predict next = prev_scholarship",
+        "desc": "Predict next clean = current clean (had_clean_current_sem)",
     }
 
     pred_rule = ((any_block_test == 0) & (any_retake_test == 0)).astype(int)
     baselines["rule_no_blocking"] = {
         "pred": pred_rule,
-        "desc": "No blocking grades & no retakes → scholarship",
+        "desc": "No blocking grades & no retakes → clean next sem",
     }
 
     for thr in [4.0, 4.2]:
-        pred_gpa = (gpa_test >= thr).astype(int)
+        # gpa NaN means "only-pass/fail semester"; treat as not meeting bar.
+        pred_gpa = ((~np.isnan(gpa_test)) & (gpa_test >= thr)).astype(int)
         baselines[f"gpa_{thr}"] = {
             "pred": pred_gpa,
-            "desc": f"GPA ≥ {thr} → scholarship",
+            "desc": f"GPA ≥ {thr} → clean next sem",
         }
 
-    return baselines, y_test
+    return baselines
 
 
 # =====================================================================
@@ -407,7 +517,7 @@ def evaluate_and_save(
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    prev = pairs_df["prev_scholarship"].values
+    prev = pairs_df["had_clean_current_sem"].values
     true_b = pairs_df["class_B"].values
 
     # ── Predictions ──
@@ -416,7 +526,7 @@ def evaluate_and_save(
     prev_test = prev[test_mask]
     true_b_test = true_b[test_mask]
 
-    y_pred = model.predict(X_test).flatten().astype(int)
+    y_pred = model.predict(X_test).astype(int)
     y_proba = model.predict_proba(X_test)[:, 1]
 
     # Derive 4-class predictions
@@ -429,7 +539,7 @@ def evaluate_and_save(
     pred_b[no & (y_pred == 0)] = 4
 
     # ── Baselines ──
-    baselines, _ = _run_baselines(pairs_df, test_mask)
+    baselines = _run_baselines(pairs_df, test_mask)
 
     print(f"\n{'=' * 70}")
     print(f"  BASELINES (test set, {len(y_test):,} пар)")
@@ -462,7 +572,7 @@ def evaluate_and_save(
     report = classification_report(
         y_test,
         y_pred,
-        target_names=["Без стипендии", "Со стипендией"],
+        target_names=["Не чисто (N+1)", "Чисто (N+1)"],
         digits=3,
     )
     print(report)
@@ -470,8 +580,8 @@ def evaluate_and_save(
     cm = confusion_matrix(y_test, y_pred)
     cm_df = pd.DataFrame(
         cm,
-        index=["Факт: без", "Факт: со"],
-        columns=["Пред: без", "Пред: со"],
+        index=["Факт: не чисто", "Факт: чисто"],
+        columns=["Пред: не чисто", "Пред: чисто"],
     )
     print("Confusion matrix (binary):")
     print(cm_df.to_string())
@@ -500,8 +610,8 @@ def evaluate_and_save(
 
     # ── Per-subgroup report ──
     for label, group_val in [
-        ("Подгруппа «стипендия была» (prev=1)", 1),
-        ("Подгруппа «стипендии не было» (prev=0)", 0),
+        ("Подгруппа «чистый результат сейчас» (had_clean=1)", 1),
+        ("Подгруппа «не чистый сейчас» (had_clean=0)", 0),
     ]:
         sub_mask = prev_test == group_val
         if sub_mask.sum() == 0:
@@ -560,19 +670,24 @@ def evaluate_and_save(
         )
 
     # ── Save predictions ──
+    # NOTE: prob_clean_next_sem is the model's probability that the student
+    # will have a clean academic record in sem N+1 (which, by Russian rules,
+    # entitles them to the stipend paid in N+2). The 'risk_score' column is
+    # the complement (probability of failing N+1). For students who already
+    # had a clean current sem (had_clean=1), this is a "loss" risk; for those
+    # who didn't, it is a "won't recover" probability.
     pred_df = pd.DataFrame(
         {
             "ЗачетнаяКнижка": pairs_df.loc[test_mask, "ЗачетнаяКнижка"].values,
             "sem_num": pairs_df.loc[test_mask, "sem_num"].values,
             "target_sem": pairs_df.loc[test_mask, "target_sem"].values,
-            "prev_scholarship": prev_test,
-            "prob_scholarship": np.round(y_proba, 4),
-            "pred_scholarship": y_pred,
-            "actual_scholarship": y_test,
+            "had_clean_current_sem": prev_test,
+            "prob_clean_next_sem": np.round(y_proba, 4),
+            "pred_clean_next_sem": y_pred,
+            "actual_clean_next_sem": y_test,
             "pred_class_B": pred_b,
             "actual_class_B": true_b_test,
             "risk_score": np.round(1 - y_proba, 4),
-            "model_used": "XGBoost",
         }
     )
     pred_csv = output_dir / "predictions.csv"
@@ -642,7 +757,11 @@ def evaluate_and_save(
     # ── Save model card ──
     card = {
         "model_type": "XGBClassifier",
-        "target": "scholarship next semester (yes/no)",
+        "target": (
+            "Clean academic record in next semester (no blocking grades, no "
+            "retakes). Under Russian academic rules, a clean record in sem "
+            "N+1 entitles the student to the stipend paid in N+2."
+        ),
         "features": feature_cols,
         "n_features": len(feature_cols),
         "n_train": int(train_mask.sum()),
@@ -670,6 +789,197 @@ def evaluate_and_save(
     with open(card_path, "w", encoding="utf-8") as f:
         json.dump(card, f, ensure_ascii=False, indent=2)
     print(f"  Сохранено: {card_path}")
+
+    # ── Save human-readable report ──
+    _save_human_report(
+        output_dir=output_dir,
+        acc=acc, f1_macro=f1_macro, auc=auc,
+        baselines=baselines, y_test=y_test,
+        train_mask=train_mask, test_mask=test_mask,
+        train_students=train_students, test_students=test_students,
+        imp_df=imp_df,
+        class_b_accuracies=class_b_accuracies,
+        pred_b=pred_b, true_b_test=true_b_test,
+        y_pred=y_pred, y_proba=y_proba,
+    )
+
+
+# =====================================================================
+# HUMAN-READABLE REPORT
+# =====================================================================
+FEATURE_DESCRIPTIONS = {
+    "sem_num": "номер текущего семестра",
+    "n_subjects": "количество дисциплин в семестре",
+    "n_blocks": "количество предметов с блокирующими оценками",
+    "n_retakes": "количество пересдач",
+    "any_block": "наличие хотя бы одной блокирующей оценки",
+    "any_retake": "наличие хотя бы одной пересдачи",
+    "gpa_overall": "средний балл за семестр",
+    "min_grade": "минимальная полученная оценка",
+    "std_grade": "разброс (стабильность) оценок",
+    "share_5": "доля «отлично» среди оцениваемых дисциплин",
+    "share_3": "доля «удовлетворительно» среди оцениваемых дисциплин",
+    "share_zachet": "доля зачётных (без оценки) дисциплин в нагрузке",
+    "had_clean_current_sem": "был ли чистый академический результат в текущем семестре",
+}
+
+
+def _save_human_report(
+    output_dir,
+    acc, f1_macro, auc,
+    baselines, y_test,
+    train_mask, test_mask,
+    train_students, test_students,
+    imp_df,
+    class_b_accuracies,
+    pred_b, true_b_test,
+    y_pred, y_proba,
+):
+    """Save a plain-language report aimed at non-technical stakeholders."""
+
+    n_test = len(y_test)
+    n_correct = int((y_test == y_pred).sum())
+    n_wrong = n_test - n_correct
+
+    # Scholarship-loss detection stats
+    actual_lost = (true_b_test == 2).sum()
+    predicted_lost = (pred_b == 2).sum()
+    caught_lost = int(((pred_b == 2) & (true_b_test == 2)).sum())
+
+    # Scholarship-gain detection stats
+    actual_gained = (true_b_test == 3).sum()
+    predicted_gained = (pred_b == 3).sum()
+    caught_gained = int(((pred_b == 3) & (true_b_test == 3)).sum())
+
+    # Best baseline
+    best_bl_name, best_bl_acc = None, 0.0
+    for name, bl in baselines.items():
+        bl_acc = accuracy_score(y_test, bl["pred"])
+        if bl_acc > best_bl_acc:
+            best_bl_acc = bl_acc
+            best_bl_name = name
+
+    # Top features
+    top_features = imp_df.head(5)
+
+    # Risk tiers
+    high_risk = (y_proba < 0.3).sum()
+    medium_risk = ((y_proba >= 0.3) & (y_proba < 0.6)).sum()
+    low_risk = (y_proba >= 0.6).sum()
+
+    lines = []
+    w = lines.append
+
+    w("# Прогноз академической успеваемости (стипендиальный риск)\n")
+    w(f"**Дата формирования:** {datetime.now().strftime('%d.%m.%Y %H:%M')}\n")
+
+    w("> **Что предсказывает модель.** Модель оценивает вероятность того, ")
+    w("> что студент **сохранит чистый академический результат в следующем ")
+    w("> семестре** (без блокирующих оценок и пересдач). По правилам ")
+    w("> большинства российских вузов чистый результат в семестре N+1 даёт ")
+    w("> право на стипендию, выплачиваемую в семестре N+2 (стипендия в N+1 ")
+    w("> уже определяется результатами текущего семестра N и не нуждается ")
+    w("> в прогнозе). Поэтому модель — это раннее предупреждение на ")
+    w("> один семестр вперёд.\n")
+
+    # ── Section 2: Data scope ──
+    w("## На каких данных обучена модель\n")
+    w(
+        f"Модель обучена на данных **{train_mask.sum():,}** переходов между семестрами "
+        f"(**{len(train_students):,}** студентов). "
+        f"Для проверки качества использовались данные **{test_mask.sum():,}** переходов "
+        f"(**{len(test_students):,}** студентов) тестовые. "
+    )
+
+    # ── Section 3: How well does it work? ──
+    w("## Насколько точна модель\n")
+    w(
+        f"На проверочной выборке из {n_test:,} переходов модель дала правильный ответ "
+        f"в **{n_correct:,}** случаях и ошиблась в **{n_wrong:,}** "
+        f"(точность **{acc:.1%}**).\n"
+    )
+    w(
+        f"Для сравнения: лучший простой метод («{best_bl_name}») даёт точность "
+        f"**{best_bl_acc:.1%}**. Модель превосходит простые правила "
+        f"на **{(acc - best_bl_acc) * 100:.1f}** п.п.\n"
+    )
+    w(
+        f"Дополнительные метрики качества: ROC-AUC = **{auc:.3f}** "
+        f"F1 (macro) = **{f1_macro:.3f}**.\n"
+    )
+
+    # ── Section 4: Transition analysis ──
+    w("## Как модель работает по категориям студентов\n")
+    w(
+        "Каждый студент относится к одной из четырёх категорий по тому, был ли "
+        "у него чистый академический результат в текущем семестре и будет ли в следующем:\n"
+    )
+    for cls in [1, 2, 3, 4]:
+        if cls in class_b_accuracies:
+            w(
+                f"- {cls}. **{CLASS_B_LABELS[cls]}** — модель угадывает "
+                f"**{class_b_accuracies[cls]:.0%}** таких случаев"
+            )
+    w("")
+
+    if actual_lost > 0:
+        w(
+            f"**Срыв успеваемости (потеря права на стипендию N+2):** из {actual_lost:,} "
+            f"студентов, у которых был чистый текущий результат, но следующий семестр "
+            f"оказался неуспешным, модель верно предупредила о {caught_lost:,} "
+            f"({caught_lost / actual_lost:.0%}). "
+        )
+    if actual_gained > 0:
+        w(
+            f"**Восстановление успеваемости (получение права на стипендию N+2):** "
+            f"из {actual_gained:,} студентов, у которых текущий семестр был не чистый, "
+            f"но следующий стал чистым, модель верно предсказала {caught_gained:,} "
+            f"({caught_gained / actual_gained:.0%}).\n"
+        )
+
+    # ── Section 5: Risk tiers ──
+    w("## Распределение по уровням риска\n")
+    w(
+        "Модель присваивает каждому переходу вероятность того, что следующий семестр "
+        "окажется чистым (от 0% до 100%). На основе этой вероятности студенты "
+        "делятся на группы. **Важно:** интерпретация риска зависит от того, "
+        "был ли чистым текущий семестр — для тех, кто и сейчас не имеет права "
+        "на стипендию (had_clean=0), низкая вероятность означает «не восстановится», "
+        "а не «потеряет».\n"
+    )
+    w(
+        f"- **Высокий риск** (вероятность < 30%): **{high_risk:,}** студентов "
+        f"({high_risk / n_test:.0%}) — рекомендуется обратить внимание"
+    )
+    w(
+        f"- **Средний риск** (30%–60%): **{medium_risk:,}** студентов "
+        f"({medium_risk / n_test:.0%}) — стоит мониторить"
+    )
+    w(
+        f"- **Низкий риск** (> 60%): **{low_risk:,}** студентов "
+        f"({low_risk / n_test:.0%}) — ситуация стабильная"
+    )
+    w("")
+
+    # ── Section 6: What matters most ──
+    w("## Что больше всего влияет на прогноз\n")
+    w(
+        "Ниже перечислены пять факторов, которые модель считает наиболее "
+        "важными при принятии решения:\n"
+    )
+    for rank, (_, row) in enumerate(top_features.iterrows(), 1):
+        feat = row["feature"]
+        desc = FEATURE_DESCRIPTIONS.get(feat, feat)
+        pct = row["importance"] * 100
+        w(f"{rank}. **{desc}** — вес {pct:.1f}%")
+    w("")
+
+    report_path = output_dir / "report_human.md"
+    with open(report_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines))
+
+    print(f"  Сохранено: {report_path}")
+    return report_path
 
 
 # =====================================================================
