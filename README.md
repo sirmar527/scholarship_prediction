@@ -36,32 +36,24 @@
 | `share_zachet` | Доля пас-фейл дисциплин в нагрузке |
 | `had_clean_current_sem` | Был ли чистым текущий семестр |
 
-## Модели
+## Модель
 
-Два канонических пайплайна, разбиение 80/20 по студентам, общий набор признаков и целевая переменная.
-
-| Скрипт | Модель | Выход |
-|---|---|---|
-| `scholarship_predict_xgb.py` | XGBoost, early stopping | `outputs/xgb/` |
-| `scholarship_predict_histgb.py` | sklearn HistGradientBoosting | `outputs/histgb/` |
+`scholarship_predict_histgb.py` обучает `sklearn.ensemble.HistGradientBoostingClassifier` с встроенным ранним остановом. Разбиение 80/20 по студентам (один студент не попадает одновременно в train и test). Permutation-importance используется как мера важности признаков. Результаты сохраняются в `outputs/histgb/`.
 
 ## Метрики
 
-Обе модели на одном и том же 80/20 разбиении по студентам (test: 2 343 пары, 9 169 пар на обучении).
+| Метрика | Значение |
+|---|---|
+| Accuracy | 83.14 % |
+| F1 (macro) | 0.830 |
+| ROC-AUC | 0.914 |
 
-| Метрика | XGBoost | HistGradientBoosting |
-|---|---|---|
-| Accuracy | 83.18 % | 83.14 % |
-| F1 (macro) | 0.830 | 0.830 |
-| ROC-AUC | 0.916 | 0.914 |
-
-Сильнейший baseline на той же выборке: accuracy ~82.3 % (правило «следующий семестр будет таким же, как текущий»). Полные таблицы (confusion matrix, разбивка по семестрам, 4-классовая транзиция Чисто/Провал × Чисто/Провал) находятся в `outputs/xgb/summary.md` и `outputs/histgb/summary.md`.
+Test: 2 343 пары, train: 9 169 пар. Сильнейший baseline на той же выборке: accuracy ~82.3 % (правило «следующий семестр будет таким же, как текущий»). Полные таблицы (confusion matrix, разбивка по семестрам, 4-классовая транзиция Чисто/Провал × Чисто/Провал) находятся в `outputs/histgb/summary.md`.
 
 ## Запуск
 
 ```bash
-pip install pandas numpy scikit-learn xgboost openpyxl
-python scholarship_predict_xgb.py
+pip install pandas numpy scikit-learn openpyxl
 python scholarship_predict_histgb.py
 ```
 
@@ -71,14 +63,6 @@ python scholarship_predict_histgb.py
 
 ```
 data/                            входные xlsx
-outputs/
-├── xgb/                         результаты XGBoost
-└── histgb/                      результаты HistGradientBoosting
-scholarship_predict_xgb.py
+outputs/histgb/                  результаты модели
 scholarship_predict_histgb.py
-CHANGELOG.md                     история патчей XGBoost-пайплайна
 ```
-
-## История
-
-Изменения канонического пайплайна задокументированы в [CHANGELOG.md](CHANGELOG.md). Состояние до большой реструктуризации (май 2026) сохранено в git-теге `v1.0-snapshot`.

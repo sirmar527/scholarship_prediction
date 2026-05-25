@@ -12,12 +12,12 @@ paid in N+2. This pipeline is therefore a ONE-SEMESTER-AHEAD early-warning
 forecast: features come from sem N, the target is "clean record in N+1"
 (which would entitle the student to a stipend in N+2).
 
-Uses sklearn's HistGradientBoostingClassifier - a histogram-based gradient
-boosting tree very close in behavior to LightGBM. Native NaN handling
-(same as XGBoost). Student-level 80/20 train/test split. Early stopping
-uses HistGB's internal row-level validation split (slight difference from
-the XGB pipeline, which carves a student-level val set manually - see
-train_model for details).
+Uses sklearn's HistGradientBoostingClassifier, a histogram-based gradient
+boosting tree close in behavior to LightGBM. Native NaN handling.
+Student-level 80/20 train/test split. Early stopping uses HistGB's
+internal row-level validation split (validation_fraction=0.15), so a
+single student's rows can appear in both the internal fit and val
+partitions; this affects only WHEN to stop, not the outer test split.
 """
 
 import argparse
@@ -377,9 +377,9 @@ def _prepare_features(pairs_df):
 
     NaN values are LEFT IN PLACE for numeric features: HistGradientBoosting
     handles them natively by learning the optimal split direction at each
-    node (same behavior as XGBoost). Do not fillna(0) for GPA / min_grade -
-    0 is not a valid value on the 2-5 grade scale, and student-semesters
-    that only contain pass/fail Зачет subjects legitimately have NaN here.
+    node. Do not fillna(0) for GPA / min_grade - 0 is not a valid value on
+    the 2-5 grade scale, and student-semesters that only contain pass/fail
+    Зачет subjects legitimately have NaN here.
     """
     feature_cols = [c for c in pairs_df.columns if c not in EXCLUDE_COLS]
 
@@ -412,13 +412,13 @@ def _split_by_students(pairs_df, seed=42):
 def train_model(pairs_df):
     """Train HistGradientBoosting with early stopping on a student-level split.
 
-    Difference from the XGB pipeline: HistGB does not accept an eval_set
-    argument, so we cannot supply a student-level validation set. We pass
-    the full train fold to .fit() and rely on HistGB's internal row-level
-    val split (validation_fraction=0.15) for early stopping. This means a
-    single student's rows can appear in both internal-fit and internal-val,
-    but this affects only WHEN to stop - never test-set integrity, since
-    the 80/20 student-level test split is preserved upstream.
+    HistGB does not accept an eval_set argument, so we cannot supply a
+    student-level validation set for early stopping. We pass the full
+    train fold to .fit() and rely on HistGB's internal row-level val
+    split (validation_fraction=0.15). A single student's rows can appear
+    in both the internal fit and val partitions, but this affects only
+    WHEN to stop - never test-set integrity, since the 80/20 student-level
+    test split is preserved upstream.
     """
     print(f"[4/5] Обучение HistGradientBoosting...")
 
@@ -642,9 +642,8 @@ def evaluate_and_save(
     # Permutation importance on the test set gives a model-agnostic measure
     # of each feature's contribution to ROC-AUC. n_repeats kept small (5)
     # because we have only 13 features and ~2300 test rows.
-    # Normalized to sum to 1.0 so values can be read as relative weights,
-    # matching XGB's feature_importances_ convention (used by the human
-    # report's "вес %" formatting).
+    # Normalized to sum to 1.0 so values can be read as relative weights
+    # (used by the human report's "вес %" formatting).
     print(f"\nFeature importances (permutation, n_repeats=5)...")
     perm = permutation_importance(
         model, X_test, y_test,
