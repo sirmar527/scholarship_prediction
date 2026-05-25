@@ -172,7 +172,7 @@ def find_data_file(directory: Path) -> Path:
 
 def load_data(path=None):
     if path is None:
-        path = find_data_file(Path(__file__).parent)
+        path = find_data_file(Path(__file__).parent / "data")
     path = Path(path)
     print(f"[1/5] Загрузка данных из {path.name}...")
 

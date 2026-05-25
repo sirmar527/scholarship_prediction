@@ -128,13 +128,13 @@ def find_data_file(directory: Path) -> Path:
                 return matches[0]
     raise FileNotFoundError(
         f"Не нашёл xlsx с данными в {directory}.\n"
-        f"Положите файл рядом со скриптом или укажите --data путь/к/файлу.xlsx"
+        f"Положите файл в data/ или укажите --data путь/к/файлу.xlsx"
     )
 
 
 def load_data(path=None):
     if path is None:
-        path = find_data_file(Path(__file__).parent)
+        path = find_data_file(Path(__file__).parent / "data")
     path = Path(path)
     print(f"[1/5] Загрузка данных из {path.name}...")
 
