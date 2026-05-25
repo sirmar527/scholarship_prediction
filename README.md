@@ -45,15 +45,17 @@
 | `scholarship_predict_xgb.py` | XGBoost, early stopping | `outputs/xgb/` |
 | `scholarship_predict_histgb.py` | sklearn HistGradientBoosting | `outputs/histgb/` |
 
-## Метрики (XGBoost)
+## Метрики
 
-| Метрика | Значение |
-|---|---|
-| Accuracy | 83.40 % |
-| F1 (macro) | 0.832 |
-| ROC-AUC | 0.916 |
+Обе модели на одном и том же 80/20 разбиении по студентам (test: 2 343 пары, 9 169 пар на обучении).
 
-Сильнейший baseline на той же выборке: accuracy ~82.4 %. Полные таблицы (confusion matrix, разбивка по семестрам, 4-классовая транзиция Чисто/Провал × Чисто/Провал) находятся в `outputs/xgb/summary.md`. Метрики HistGradientBoosting появятся в `outputs/histgb/summary.md` после первого запуска.
+| Метрика | XGBoost | HistGradientBoosting |
+|---|---|---|
+| Accuracy | 83.18 % | 83.14 % |
+| F1 (macro) | 0.830 | 0.830 |
+| ROC-AUC | 0.916 | 0.914 |
+
+Сильнейший baseline на той же выборке: accuracy ~82.3 % (правило «следующий семестр будет таким же, как текущий»). Полные таблицы (confusion matrix, разбивка по семестрам, 4-классовая транзиция Чисто/Провал × Чисто/Провал) находятся в `outputs/xgb/summary.md` и `outputs/histgb/summary.md`.
 
 ## Запуск
 
@@ -76,8 +78,6 @@ scholarship_predict_xgb.py
 scholarship_predict_histgb.py
 CHANGELOG.md                     история патчей XGBoost-пайплайна
 ```
-
-Старые варианты моделей (CatBoost в трёх конфигурациях, sklearn-зоопарк, baseline по матанализу, TabPFN, кластеризатор ФГОС) и их выводы лежат в `legacy/` и `outputs/legacy/`. Обе папки добавлены в `.gitignore`.
 
 ## История
 
