@@ -993,8 +993,8 @@ def main():
     parser.add_argument(
         "--output",
         type=str,
-        default="output_xgb",
-        help="Папка для результатов (default: output_xgb/)",
+        default="outputs/xgb",
+        help="Папка для результатов (default: outputs/xgb/)",
     )
     args = parser.parse_args()
 

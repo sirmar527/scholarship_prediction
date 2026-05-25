@@ -16,7 +16,7 @@ classify_fgos.py — Реконструкция структуры ФГОС из
 
 Запуск:
     python classify_fgos.py
-    python classify_fgos.py --data path/to/file.xlsx --output fgos_output/
+    python classify_fgos.py --data path/to/file.xlsx --output outputs/fgos/
 
 После проверки и исправления block_mapping.csv —
 запускайте scholarship_predict.py с ключом --blocks block_mapping.csv
@@ -646,8 +646,8 @@ def main():
     )
     parser.add_argument("--data", type=str, default=None,
                         help="Путь к xlsx-файлу")
-    parser.add_argument("--output", type=str, default="fgos_output",
-                        help="Папка для результатов (default: fgos_output/)")
+    parser.add_argument("--output", type=str, default="outputs/fgos",
+                        help="Папка для результатов (default: outputs/fgos/)")
     args = parser.parse_args()
 
     df = load_data(args.data)
