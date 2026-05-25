@@ -126,7 +126,7 @@ def find_data_file(directory: Path) -> Path:
 
 def load_data(path=None):
     if path is None:
-        path = find_data_file(Path(__file__).parent)
+        path = find_data_file(Path(__file__).parent / "data")
     path = Path(path)
     print(f"[1/6] Загрузка данных из {path.name}...")
 
@@ -937,8 +937,8 @@ def main():
     parser.add_argument(
         "--output",
         type=str,
-        default="output_sklearn",
-        help="Папка для результатов (default: output_sklearn/)",
+        default="outputs/sklearn",
+        help="Папка для результатов (default: outputs/sklearn/)",
     )
     args = parser.parse_args()
 

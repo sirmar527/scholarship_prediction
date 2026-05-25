@@ -85,7 +85,7 @@ def find_data_file(directory: Path) -> Path:
 
 def load_data(path=None):
     if path is None:
-        path = find_data_file(Path(__file__).parent)
+        path = find_data_file(Path(__file__).parent / "data")
     path = Path(path)
     print(f"[1/5] Загрузка данных из {path.name}...")
 
@@ -611,8 +611,8 @@ def main():
     )
     parser.add_argument("--data", type=str, default=None,
                         help="Путь к xlsx-файлу")
-    parser.add_argument("--output", type=str, default="output_single",
-                        help="Папка для результатов (default: output_single/)")
+    parser.add_argument("--output", type=str, default="outputs/catboost_single",
+                        help="Папка для результатов (default: outputs/catboost_single/)")
     args = parser.parse_args()
 
     # Pipeline

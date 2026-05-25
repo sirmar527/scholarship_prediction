@@ -78,7 +78,7 @@ def find_data_file(directory: Path) -> Path:
 # ---------------------------------------------------------------------------
 def load_data(path: str | Path | None = None) -> pd.DataFrame:
     if path is None:
-        path = find_data_file(Path(__file__).parent)
+        path = find_data_file(Path(__file__).parent / "data")
     path = Path(path)
     print(f"Загрузка данных из {path.name}...")
     df = pd.read_excel(path, sheet_name="Sheet1")
@@ -307,8 +307,8 @@ def main():
     )
     parser.add_argument("--data", type=str, default=None,
                         help="Путь к xlsx-файлу с данными")
-    parser.add_argument("--output", type=str, default="output",
-                        help="Папка для результатов (default: output/)")
+    parser.add_argument("--output", type=str, default="outputs/baseline_binary",
+                        help="Папка для результатов (default: outputs/baseline_binary/)")
     args = parser.parse_args()
 
     df = load_data(args.data)
