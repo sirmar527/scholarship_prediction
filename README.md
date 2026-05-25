@@ -1,126 +1,84 @@
 # Scholarship Prediction
 
-**EN.** Machine-learning pipelines that forecast whether a Russian-university student will keep a clean academic record in the next semester, which under standard rules entitles them to a stipend the semester after. Built on anonymised grade-level data conforming to **ГОСТ Р 70946-2023, Приложение 8**. Two canonical models are kept side-by-side: XGBoost and sklearn HistGradientBoosting.
+**EN.** Binary classifier predicting whether a Russian-university student will maintain a clean academic record (no blocking grades, no retakes) in the next semester. Dataset: anonymised grade-level data conforming to ГОСТ Р 70946-2023, Приложение 8.
 
----
+## Задача
 
-## Что это
-
-Проект предсказывает, **сохранит ли студент «чистую успеваемость» в следующем семестре** (без блокирующих оценок и пересдач). По правилам в РФ чистый семестр N+1 даёт право на стипендию в N+2, то есть модель работает как **раннее предупреждение за один семестр вперёд**: признаки берутся из сем. N, целевая переменная это состояние в сем. N+1.
-
-## Структура проекта
-
-```
-scholarship_pred/
-├── data/                                  # входные xlsx
-│   ├── ГОСТ Р 70946-2023-Приложение-8_sorted.xlsx
-│   └── output_bachelors_*.xlsx
-├── outputs/                               # результаты моделей
-│   ├── xgb/             канонический XGBoost
-│   └── histgb/          канонический HistGradientBoosting
-├── scholarship_predict_xgb.py             # канонический XGBoost
-├── scholarship_predict_histgb.py          # канонический HistGradientBoosting
-├── CHANGELOG.md                           # история патчей XGB-модели
-└── README.md
-```
-
-Старые варианты моделей (CatBoost в трёх конфигурациях, sklearn-зоопарк, baseline по матанализу, TabPFN, кластеризатор ФГОС `classify_fgos.py`) и их выводы лежат локально в `legacy/` и `outputs/legacy/`. Эти папки добавлены в `.gitignore` и не входят в репозиторий.
+Для пары (семестр N, семестр N+1) одного студента предсказать, будет ли семестр N+1 чистым (без блокирующих оценок и без пересдач). По стандартным академическим правилам РФ чистый семестр N+1 даёт право на стипендию в семестре N+2; модель работает как ранний прогноз на один семестр вперёд.
 
 ## Данные
 
-Источник: выгрузка по структуре **ГОСТ Р 70946-2023, Приложение 8** (анонимизированные оценки).
-
-| Показатель | Значение |
+| | |
 |---|---|
 | Строк (оценок) | 155 295 |
-| Уникальных студентов | 5 933 |
+| Студентов | 5 933 |
 | Учебных планов | 345 |
-| Завершивших программу | 1 852 (1 565 бакалавров, 287 специалистов) |
 | Пар (сем. N, сем. N+1) | 11 508 |
 
-Фильтрация в каноническом пайплайне:
-- Только очная форма обучения
-- Типы ведомостей: Основная, Перезачёт, Пересдача, Пересдача с комиссией
-- Пары соседних семестров одного студента
+Фильтрация: только очная форма; типы ведомостей {Основная, Перезачёт, Пересдача, Пересдача с комиссией}; соседние семестры одного студента.
 
 ## Целевая переменная
 
-`target_clean_next_sem`: бинарный признак, будет ли в следующем семестре **чистая успеваемость**, то есть:
-- нет блокирующих оценок (двоек, неявок без уважительной причины),
-- нет пересдач.
-
-По стандартным академическим правилам в РФ чистый сем. N+1 даёт право на стипендию в N+2, поэтому модель работает как ранний прогноз стипендии на два семестра вперёд.
+`target_clean_next_sem` принимает значения 0 или 1: 1, если в семестре N+1 нет блокирующих оценок и нет пересдач.
 
 ## Признаки (13)
 
 | Признак | Описание |
 |---|---|
-| `sem_num` | Номер текущего семестра (1-10) |
-| `n_subjects` | Количество предметов в семестре |
-| `n_blocks` | Количество блокирующих оценок |
-| `n_retakes` | Количество пересдач |
-| `any_block` | Был ли хотя бы один блок |
-| `any_retake` | Была ли хотя бы одна пересдача |
+| `sem_num` | Номер семестра (1-10) |
+| `n_subjects` | Число дисциплин в семестре |
+| `n_blocks`, `any_block` | Количество и наличие блокирующих оценок |
+| `n_retakes`, `any_retake` | Количество и наличие пересдач |
 | `gpa_overall` | Средний балл по числовым оценкам |
 | `min_grade` | Минимальная оценка |
 | `std_grade` | Стандартное отклонение оценок |
-| `share_5` / `share_3` | Доля пятёрок / троек среди числовых оценок |
-| `share_zachet` | Доля «зачётов» среди всех контрольных |
+| `share_5`, `share_3` | Доли пятёрок и троек среди оцениваемых дисциплин |
+| `share_zachet` | Доля пас-фейл дисциплин в нагрузке |
 | `had_clean_current_sem` | Был ли чистым текущий семестр |
 
-Обоснование изменений признаков лежит в [CHANGELOG.md](CHANGELOG.md).
+## Модели
 
-## Метрики (XGBoost, после патча)
+Два канонических пайплайна, разбиение 80/20 по студентам, общий набор признаков и целевая переменная.
+
+| Скрипт | Модель | Выход |
+|---|---|---|
+| `scholarship_predict_xgb.py` | XGBoost, early stopping | `outputs/xgb/` |
+| `scholarship_predict_histgb.py` | sklearn HistGradientBoosting | `outputs/histgb/` |
+
+## Метрики (XGBoost)
 
 | Метрика | Значение |
 |---|---|
 | Accuracy | 83.40 % |
-| F1 macro | 0.832 |
+| F1 (macro) | 0.832 |
 | ROC-AUC | 0.916 |
 
-Сильнейший baseline даёт ~82.4 %, модель уверенно его превосходит. Сравнение «до и после» патча в [CHANGELOG.md](CHANGELOG.md). Метрики HistGradientBoosting появятся в `outputs/histgb/summary.md` после первого запуска.
-
-## Модели
-
-Каждый скрипт это самостоятельный пайплайн: читает данные из `data/`, пишет в свою папку в `outputs/`.
-
-| Скрипт | Подход | Выход |
-|---|---|---|
-| `scholarship_predict_xgb.py` | **XGBoost**: early stopping, разбиение по студентам | `outputs/xgb/` |
-| `scholarship_predict_histgb.py` | **HistGradientBoosting** (sklearn, аналог LightGBM): нативный NaN, permutation importance | `outputs/histgb/` |
-
-Технические различия между XGB и HistGB описаны в docstring каждого скрипта.
+Сильнейший baseline на той же выборке: accuracy ~82.4 %. Полные таблицы (confusion matrix, разбивка по семестрам, 4-классовая транзиция Чисто/Провал × Чисто/Провал) находятся в `outputs/xgb/summary.md`. Метрики HistGradientBoosting появятся в `outputs/histgb/summary.md` после первого запуска.
 
 ## Запуск
 
-Все скрипты ищут xlsx-файл в `data/` по умолчанию. Можно переопределить через `--data` и `--output`:
-
-```bash
-# Канонический XGBoost
-python scholarship_predict_xgb.py
-
-# Канонический HistGradientBoosting
-python scholarship_predict_histgb.py
-
-# С нестандартными путями
-python scholarship_predict_xgb.py --data path/to/file.xlsx --output путь/к/результатам/
-```
-
-## Зависимости
-
-```
-pandas
-numpy
-scikit-learn       # включает HistGradientBoosting, permutation_importance, joblib
-xgboost            # для scholarship_predict_xgb.py
-openpyxl           # чтение xlsx
-```
-
-Установка:
 ```bash
 pip install pandas numpy scikit-learn xgboost openpyxl
+python scholarship_predict_xgb.py
+python scholarship_predict_histgb.py
 ```
+
+Флаги: `--data path.xlsx`, `--output dir/`.
+
+## Структура
+
+```
+data/                            входные xlsx
+outputs/
+├── xgb/                         результаты XGBoost
+└── histgb/                      результаты HistGradientBoosting
+scholarship_predict_xgb.py
+scholarship_predict_histgb.py
+CHANGELOG.md                     история патчей XGBoost-пайплайна
+```
+
+Старые варианты моделей (CatBoost в трёх конфигурациях, sklearn-зоопарк, baseline по матанализу, TabPFN, кластеризатор ФГОС) и их выводы лежат в `legacy/` и `outputs/legacy/`. Обе папки добавлены в `.gitignore`.
 
 ## История
 
-Все изменения канонической XGB-модели задокументированы в [CHANGELOG.md](CHANGELOG.md). Состояние репозитория до большой реструктуризации (май 2026) сохранено в git-теге `v1.0-snapshot`.
+Изменения канонического пайплайна задокументированы в [CHANGELOG.md](CHANGELOG.md). Состояние до большой реструктуризации (май 2026) сохранено в git-теге `v1.0-snapshot`.
