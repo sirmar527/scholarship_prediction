@@ -1,14 +1,3 @@
-# Canonical pipeline dependencies (scholarship_predict_histgb.py).
-# Pinned to the current .venv state for reproducibility — versions reflect
-# what produced the metrics in outputs/histgb/model_card.json.
-#
-# Pre-release notice: pandas 3.0.x, numpy 2.4.x, scikit-learn 1.8.x and
-# openpyxl 3.2.0b1 are not yet GA at time of pin. Replace with the latest
-# stable equivalents if a clean reinstall fails to find these on PyPI.
-#
-# Legacy scripts in legacy/ also use catboost, lightgbm, xgboost,
-# matplotlib, plotly — install those separately if reviving legacy work.
-
 joblib==1.5.3
 numpy==2.4.4
 openpyxl==3.2.0b1
