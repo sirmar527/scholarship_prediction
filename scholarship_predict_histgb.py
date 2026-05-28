@@ -1,19 +1,18 @@
 """
-Scholarship prediction with HistGradientBoosting.
+given a student's grades from semester n, guess whether they'll finish
+n+1 with a clean academic record - no blocking grades, no retakes (making it just n to n+1 seems like an agnostic task
+but I'll let it slide)
 
-Given a student's grades from semester N, guess whether they'll finish
-N+1 with a clean academic record - no blocking grades, no retakes.
-
-A small terminology trap up front: in the Russian system, the stipend
-paid in semester N+1 is already decided by semester N's results, so
-there's nothing left to predict there. A clean N+1 is what unlocks the
-stipend paid in N+2. So this pipeline is really an early warning one
+in the Russian system, the stipend
+paid in semester n+1 is already decided by semester n's results, so
+there's nothing left to predict there. a clean n+1 is what unlocks the
+stipend paid in n+2. So this pipeline is really an early warning one
 semester ahead: features come from N, target is the clean/not-clean
-flag for N+1.
+flag for n+1. (binary matrix would be created for class_B pairs at the output)
 
-Model: sklearn's HistGradientBoostingClassifier (histogram-based GBT).
-We split 80/20 by student so no one straddles train and test. Early
-stopping uses HistGB's own row-level validation split, which means a
+Model: sklearn's HistGradientBoostingClassifier.
+split 80/20 by student. early
+stopping uses hist's own row-level validation split, which means a
 single student's rows can land in both the inner fit and inner val
 partitions - that only affects when we stop training, not the outer
 test split.
@@ -65,17 +64,16 @@ SCHOLARSHIP_BLOCKING_GRADES = {
     "Не зачтено",
     "Неявка",
 }
-# Pass/fail subjects (Зачет) do not enter GPA. The main classifier for them
+# pass/fail subjects (Зачет) do not enter GPA. The main classifier for them
 # is ВидКонтроля; PASS_FAIL_GRADES is just a backstop in case the data has
-# weird grade/control-type combinations down the line.
+# weird grade/control-type combinations down the line. (happens a lot)
 PASS_FAIL_CONTROL_TYPES = {"Зачет"}
 PASS_FAIL_GRADES = {"Зачтено", "Не зачтено"}
 
-# When a single discipline shows up as more than one row (e.g. an exam
-# plus a coursework component), we keep the one with the lowest priority
+# when a single discipline shows up as more than one row (having same name), keep the one with the lowest priority
 # below. Graded coursework outranks plain Зачет on purpose - the surviving
 # row's text label feeds into share_5 / share_3 later, so we want the
-# "real" graded result to survive.
+# "real" graded result to survive. (some countries can count gpa of pass as 5 tho, but rare so dropped)
 DEDUP_PRIORITY = {
     "Экзамен": 0,
     "Зачет с оценкой": 1,
@@ -87,14 +85,14 @@ DEDUP_PRIORITY = {
 }
 DEDUP_PRIORITY_DEFAULT = 4  # for any ВидКонтроля not listed above
 
-# Other ведомость types we keep besides Основная:
-#   - Перезачет: credits transferred from prior education. We treat
-#     these as passed work - they count toward subject load and GPA,
-#     but never block a scholarship and never count as a retake.
-#   - Пересдача / Пересдача с комиссией: in this dataset a retake
-#     usually shows up as a duplicate row next to the Основная row it
-#     "updates". We drop those duplicates and keep only orphan retakes
-#     (where there is no matching Основная for the same student/sem/subject).
+# other ведомость types kept besides Основная:
+# Перезачет: credits transferred from prior education. treat them
+# these as passed work - they count toward subject load and GPA,
+# but never block a scholarship and never count as a retake.
+# Пересдача / Пересдача с комиссией: in this dataset a retake
+# usually shows up as a duplicate row next to the Основная row it
+# updates. drop those duplicates and keep only orphan retakes
+# (where there is no matching Основная for the same student/sem/subject).
 KEPT_VEDOMOST_TYPES = {"Основная", "Перезачет", "Пересдача", "Пересдача с комиссией"}
 RETAKE_VEDOMOST_TYPES = {"Пересдача", "Пересдача с комиссией"}
 
@@ -112,7 +110,7 @@ DATA_FILE_PATTERNS = [
 ]
 
 
-# Data
+# data
 def find_data_file(directory: Path) -> Path:
     for name in DATA_FILE_PATTERNS:
         if "*" not in name:
@@ -142,12 +140,12 @@ def load_data(path=None):
     df["sem_num"] = df["sem_num"].astype(int)
     df = df[df["ФормаОбучения"] == "Очная"]
 
-    # Keep only the ведомость types we care about (see KEPT_VEDOMOST_TYPES).
+    # only needed vedomisti
     df = df[df["ТипВедомости"].isin(KEPT_VEDOMOST_TYPES)].copy()
 
-    # Retakes in this dataset usually appear as duplicate rows alongside
+    # retakes in this dataset usually appear as duplicate rows alongside
     # the Основная row for the same (student, sem, subject) - same final
-    # mark, same score columns. Drop those duplicates or we double-count.
+    # mark, same score columns. Drop those duplicates
     osn_keys = set(
         zip(
             df.loc[df["ТипВедомости"] == "Основная", "ЗачетнаяКнижка"],
@@ -166,18 +164,19 @@ def load_data(path=None):
     df["is_scholarship_blocking"] = (
         df["ИтоговаяОтметка"].isin(SCHOLARSHIP_BLOCKING_GRADES).astype(int)
     )
-    # The score columns Пересдача, Комиссия, Экзамен are on a 0-100 scale.
+    # the score columns Пересдача, Комиссия, Экзамен are on a 0-100 scale.
     # For retakes, a positive value clearly means "took the retake and got
     # this score". Zero is ambiguous though - either no retake was scheduled,
     # or one was scheduled and the student didn't show up. The no-show case
     # has its own marker in ИтоговаяОтметка == "Неявка", so a retake
-    # actually happened iff:
+    # actually happened??? (ambiguous at best, because of the dataset limitations and inconsistencies
+    # can't really do anything about it so just dropped as is)
     df["has_retake"] = (
         (df["Пересдача"] > 0)
         | (df["Комиссия"] > 0)
         | (df["ИтоговаяОтметка"] == "Неявка")
     ).astype(int)
-    # Orphan retake rows (no matching Основная) are retakes by definition.
+    # orphan retake rows (no matching Основная) are retakes by definition.
     df.loc[df["ТипВедомости"].isin(RETAKE_VEDOMOST_TYPES), "has_retake"] = 1
 
     # Перезачет = transferred credit from prior education. These never
@@ -191,7 +190,7 @@ def load_data(path=None):
     return df
 
 
-# Features
+# features
 def build_features(df):
     print(f"[2/5] Построение признаков...")
 
@@ -225,15 +224,13 @@ def build_features(df):
 
     key = ["ЗачетнаяКнижка", "sem_num"]
 
-    # Split into graded subjects vs pass/fail. ВидКонтроля does the work;
-    # PASS_FAIL_GRADES is just a backstop.
     is_pass_fail = (
         df["ВидКонтроля"].isin(PASS_FAIL_CONTROL_TYPES)
         | df["ИтоговаяОтметка"].isin(PASS_FAIL_GRADES)
     )
     df_graded = df[~is_pass_fail]
 
-    # First pass: counts and "did anything bad happen" flags across ALL subjects.
+    # first pass: counts flags across ALL subjects.
     overall = (
         df.groupby(key)
         .agg(
@@ -246,8 +243,6 @@ def build_features(df):
         .reset_index()
     )
 
-    # GPA-style stats are only meaningful over graded subjects (a Зачет
-    # doesn't have a real grade value).
     gpa_stats = (
         df_graded.groupby(key)
         .agg(
@@ -260,8 +255,8 @@ def build_features(df):
     overall = overall.merge(gpa_stats, on=key, how="left")
 
     # share_5 / share_3 use the numeric grade after dedup, NOT the text
-    # label on the surviving row. The two can disagree because we
-    # overwrote grade_num with disc_min_grade but left ИтоговаяОтметка alone.
+    # label on the surviving row. The two can disagree because of
+    # overwritten grade_num with disc_min_grade but left ИтоговаяОтметка alone.
     graded_per_key = df_graded.groupby(key).size()
     share_5 = df_graded[df_graded["grade_num"] == 5].groupby(key).size() / graded_per_key
     share_3 = df_graded[df_graded["grade_num"] == 3].groupby(key).size() / graded_per_key
@@ -281,7 +276,8 @@ def build_features(df):
     # blocking grades and no retakes. That's what unlocks the stipend
     # for the next semester. No special case for sem 1 here: a first-
     # semester student with a blocking grade really did not have a
-    # clean record.
+    # clean record. (tho a student can and always are enrolled with a scholarship
+    # they can lose it
     overall["clean_record"] = 0
     overall.loc[
         (overall["any_block"] == 0) & (overall["any_retake"] == 0), "clean_record"
@@ -294,23 +290,10 @@ def build_features(df):
     return overall
 
 
-# Pairs
+# pairs
 def build_pairs(features_df):
     """Build one training row per consecutive-semester transition.
-
-    For each student we walk through their semesters in order, and
-    whenever two adjacent semesters N and N+1 are both present we emit
-    a row:
-        features = the aggregates from sem N
-        target   = clean_record from sem N+1 (target_clean_next_sem)
-
-    One student can contribute several pairs across their career
-    (sem 2->3, then 3->4, then 4->5, ...). The 80/20 train/test split
-    happens later in train_model and splits by student, so all of a
-    given person's pairs stay on the same side.
-
-    class_B is a diagnostic 4-class label that records the direction of
-    the transition. We only use it for reporting, never for training:
+        class_B:
         1 = clean -> clean
         2 = clean -> fail
         3 = fail  -> clean
@@ -325,15 +308,13 @@ def build_pairs(features_df):
         grp = grp.sort_values("sem_num")
         sems = grp["sem_num"].values
         for i in range(len(sems) - 1):
-            # Only consecutive semesters. A jump like (3, 5) would be a
-            # two-step prediction, and our one-semester aggregates aren't
-            # built for that.
+            # only consecutive semesters
             if sems[i + 1] - sems[i] == 1:
                 current = grp[grp["sem_num"] == sems[i]].iloc[0].to_dict()
                 next_clean = grp[grp["sem_num"] == sems[i + 1]].iloc[0]["clean_record"]
                 current["target_clean_next_sem"] = int(next_clean)
                 current["target_sem"] = int(sems[i + 1])
-                # Carry the current-semester clean status forward as a
+                # carry the current-semester clean status forward as a
                 # feature. It also feeds class_B below, and it's the
                 # single strongest predictor of whether next semester
                 # will also be clean.
@@ -374,7 +355,7 @@ def build_pairs(features_df):
     return pairs_df
 
 
-# Split and train
+# split and train
 EXCLUDE_COLS = {
     "ЗачетнаяКнижка",
     "target_clean_next_sem",
@@ -385,13 +366,12 @@ EXCLUDE_COLS = {
 
 
 def _prepare_features(pairs_df):
-    # Pull out X, y, and the list of feature column names.
     feature_cols = [c for c in pairs_df.columns if c not in EXCLUDE_COLS]
 
     X = pairs_df[feature_cols].copy()
     y = pairs_df["target_clean_next_sem"].astype(int)
 
-    # A semester with just one graded subject has no real std - call it zero.
+    # one subject - zero fiilna
     if "std_grade" in X.columns:
         X["std_grade"] = X["std_grade"].fillna(0)
 
@@ -399,7 +379,7 @@ def _prepare_features(pairs_df):
 
 
 def _split_by_students(pairs_df, seed=42):
-    """Random 80/20 split at the student level - same person never on both sides."""
+    # random 80/20 split
     unique_students = pairs_df["ЗачетнаяКнижка"].unique()
     rng = np.random.RandomState(seed)
     rng.shuffle(unique_students)
@@ -413,9 +393,7 @@ def _split_by_students(pairs_df, seed=42):
 
 
 def train_model(pairs_df):
-    # Fit HistGB with early stopping. The early-stop val split is
-    # row-level inside HistGB, not student-level - see the top docstring
-    # for why that's fine.
+    # early stopping
     print(f"[4/5] Обучение HistGradientBoosting...")
 
     X, y, feature_cols = _prepare_features(pairs_df)
@@ -452,9 +430,8 @@ def train_model(pairs_df):
         train_students, test_students
 
 
-# Baselines
+# baselines
 def _run_baselines(pairs_df, test_mask):
-    """A few dead-simple rules to compare the model against on the test set."""
     y_test = pairs_df.loc[test_mask, "target_clean_next_sem"].values
     prev_test = pairs_df.loc[test_mask, "had_clean_current_sem"].values
     gpa_test = pairs_df.loc[test_mask, "gpa_overall"].values
@@ -482,7 +459,7 @@ def _run_baselines(pairs_df, test_mask):
     }
 
     for thr in [4.0, 4.2]:
-        # NaN gpa means the semester was all pass/fail - treat as "doesn't qualify".
+        # dropped gpa less semesters
         pred_gpa = ((~np.isnan(gpa_test)) & (gpa_test >= thr)).astype(int)
         baselines[f"gpa_{thr}"] = {
             "pred": pred_gpa,
@@ -492,7 +469,7 @@ def _run_baselines(pairs_df, test_mask):
     return baselines
 
 
-# Evaluation
+# evaluation
 def evaluate_and_save(
     model, best_iter, X, y, feature_cols,
     train_mask, test_mask, train_students, test_students,
@@ -506,7 +483,7 @@ def evaluate_and_save(
     prev = pairs_df["had_clean_current_sem"].values
     true_b = pairs_df["class_B"].values
 
-    # Predictions
+    # predictions
     X_test = X[test_mask].values
     y_test = y[test_mask].values
     prev_test = prev[test_mask]
@@ -515,11 +492,7 @@ def evaluate_and_save(
     y_pred = model.predict(X_test).astype(int)
     y_proba = model.predict_proba(X_test)[:, 1]
 
-    # Turn the binary prediction into the 4-class transition label by
-    # combining it with the (already observed) current-semester state.
-    # Same encoding as CLASS_B_LABELS / variant_b in build_pairs.
-    # Class 2 (clean -> fail) is the one we actually care about - the
-    # scholarship-loss case worth catching early.
+    # class_B
     pred_b = np.zeros(len(y_pred), dtype=int)
     had = prev_test == 1  # student had a clean current sem
     pred_b[had & (y_pred == 1)] = 1  # clean -> clean
@@ -528,7 +501,7 @@ def evaluate_and_save(
     pred_b[no & (y_pred == 1)] = 3  # fail  -> clean
     pred_b[no & (y_pred == 0)] = 4  # fail  -> fail
 
-    # Baselines
+    # baselines
     baselines = _run_baselines(pairs_df, test_mask)
 
     print(f"\n{'=' * 70}")
@@ -546,7 +519,7 @@ def evaluate_and_save(
             f"AUC={bl_auc:.3f}  | {bl['desc']}"
         )
 
-    # Model metrics
+    # model metrics
     acc = accuracy_score(y_test, y_pred)
     f1_macro = f1_score(y_test, y_pred, average="macro")
     auc = roc_auc_score(y_test, y_proba)
@@ -598,9 +571,7 @@ def evaluate_and_save(
                 f"{acc_cls:.1%} ({mask_cls.sum():,} cases)"
             )
 
-    # Per-subgroup report - split the test set by current-semester state
-    # so we can see whether the model is good at "loss" detection vs
-    # "recovery" detection separately.
+    # per-subgroup report
     for label, group_val in [
         ("Подгруппа «чистый результат сейчас» (had_clean=1)", 1),
         ("Подгруппа «не чистый сейчас» (had_clean=0)", 0),
@@ -635,7 +606,7 @@ def evaluate_and_save(
             )
         )
 
-    # Feature importance via permutation. HistGB doesn't expose
+    # feature importance via permutation. HistGB doesn't expose
     # feature_importances_, but permutation importance on the test set
     # works fine and is model-agnostic. Reads as relative weights after
     # the normalization below.
@@ -654,7 +625,7 @@ def evaluate_and_save(
     for _, row in imp_df.iterrows():
         print(f"  {row['feature']:<40} {row['importance']:>8.4f}")
 
-    # Per-semester breakdown
+    # per-semester breakdown
     test_sems = pairs_df.loc[test_mask, "sem_num"].values
     print(f"\nПо семестрам:")
     for from_s in sorted(set(test_sems)):
@@ -672,8 +643,7 @@ def evaluate_and_save(
             f"acc={acc_s:.1%}, AUC={auc_s:.3f}, n={mask_s.sum()}"
         )
 
-    # Save predictions.
-    # Quick interpretation note for whoever opens this CSV later:
+    # save predictions.
     # prob_clean_next_sem is the model's probability that the student
     # will be clean in sem N+1, and risk_score is just 1 minus that.
     # The same number means different things depending on the current
