@@ -36,15 +36,15 @@
     },
     "rule_no_blocking": {
       "accuracy": 0.8229,
-      "description": "No blocking grades & no retakes → clean next sem"
+      "description": "No blocking grades & no retakes -> clean next sem"
     },
     "gpa_4.0": {
       "accuracy": 0.7926,
-      "description": "GPA ≥ 4.0 → clean next sem"
+      "description": "GPA >= 4.0 -> clean next sem"
     },
     "gpa_4.2": {
       "accuracy": 0.8178,
-      "description": "GPA ≥ 4.2 → clean next sem"
+      "description": "GPA >= 4.2 -> clean next sem"
     }
   },
   "variant_b_accuracy": {
@@ -54,5 +54,5 @@
     "4": 0.9476
   },
   "random_seed": 42,
-  "date": "2026-05-25T14:18:45.722845"
+  "date": "2026-05-28T08:26:18.741429"
 }

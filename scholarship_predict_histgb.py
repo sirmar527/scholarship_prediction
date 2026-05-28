@@ -104,10 +104,10 @@ KEPT_VEDOMOST_TYPES = {"Основная", "Перезачет", "Пересда
 RETAKE_VEDOMOST_TYPES = {"Пересдача", "Пересдача с комиссией"}
 
 CLASS_B_LABELS = {
-    1: "Чисто→чисто",
-    2: "Чисто→провал",
-    3: "Провал→чисто",
-    4: "Провал→провал",
+    1: "Чисто->чисто",
+    2: "Чисто->провал",
+    3: "Провал->чисто",
+    4: "Провал->провал",
 }
 
 DATA_FILE_PATTERNS = [
@@ -195,7 +195,7 @@ def load_data(path=None):
     df.loc[perezachet_mask, "is_scholarship_blocking"] = 0
     df.loc[perezachet_mask, "has_retake"] = 0
 
-    print(f"  → {len(df):,} записей, {df['ЗачетнаяКнижка'].nunique():,} студентов")
+    print(f"  -> {len(df):,} записей, {df['ЗачетнаяКнижка'].nunique():,} студентов")
     return df
 
 
@@ -235,7 +235,7 @@ def build_features(df):
 
     key = ["ЗачетнаяКнижка", "sem_num"]
 
-    # ── Split: graded subjects vs pass/fail ──
+    # -- Split: graded subjects vs pass/fail --
     # Classify by ВидКонтроля (universal rule); PASS_FAIL_GRADES kept as a
     # defensive secondary check.
     is_pass_fail = (
@@ -244,7 +244,7 @@ def build_features(df):
     )
     df_graded = df[~is_pass_fail]
 
-    # ── Aggregate over ALL subjects (counts, blocking, retakes) ──
+    # -- Aggregate over ALL subjects (counts, blocking, retakes) --
     overall = (
         df.groupby(key)
         .agg(
@@ -257,7 +257,7 @@ def build_features(df):
         .reset_index()
     )
 
-    # ── GPA stats from graded subjects only (excluding pass/fail Зачет) ──
+    # -- GPA stats from graded subjects only (excluding pass/fail Зачет) --
     gpa_stats = (
         df_graded.groupby(key)
         .agg(
@@ -269,7 +269,7 @@ def build_features(df):
     )
     overall = overall.merge(gpa_stats, on=key, how="left")
 
-    # ── share_5, share_3: computed from the numeric grade after dedup ──
+    # -- share_5, share_3: computed from the numeric grade after dedup --
     # (NOT from the surviving row's text label - those can disagree because
     # disc_min_grade overwrites grade_num while ИтоговаяОтметка is left
     # alone.)
@@ -277,7 +277,7 @@ def build_features(df):
     share_5 = df_graded[df_graded["grade_num"] == 5].groupby(key).size() / graded_per_key
     share_3 = df_graded[df_graded["grade_num"] == 3].groupby(key).size() / graded_per_key
 
-    # ── share_zachet: fraction of pass/fail subjects in total load ──
+    # -- share_zachet: fraction of pass/fail subjects in total load --
     total_per_key = df.groupby(key).size()
     zachet_per_key = df[is_pass_fail].groupby(key).size()
     share_zachet = zachet_per_key / total_per_key
@@ -299,7 +299,7 @@ def build_features(df):
     ] = 1
 
     print(
-        f"  → {len(overall):,} (студент, семестр) строк, "
+        f"  -> {len(overall):,} (студент, семестр) строк, "
         f"{len(overall.columns)} колонок"
     )
     return overall
@@ -309,7 +309,33 @@ def build_features(df):
 # 3. BUILD TRANSITION PAIRS
 # =====================================================================
 def build_pairs(features_df):
-    print(f"[3/5] Построение обучающих пар (сем N → сем N+1)...")
+    """Emit one row per consecutive-semester transition.
+
+    For each student, walks through their semesters in order. Whenever
+    semesters N and N+1 both exist in the data (no gap), produces one
+    training row:
+        features = aggregated features of sem N
+        target   = clean_record of sem N+1 (target_clean_next_sem)
+
+    A single student can contribute multiple pairs across their career
+    (e.g., sem 2->3, 3->4, 4->5, ...). The student-level 80/20 split
+    happens later in train_model and keeps a student's rows together.
+
+    Non-consecutive semesters produce no pair for the gap. Reasons a gap
+    occurs in this dataset: academic leave, transfer between programs,
+    missing/dropped records. We intentionally do NOT bridge gaps because
+    a 2-semester gap means we'd be predicting two transitions away with
+    one-transition features.
+
+    The 4-class label `class_B` is a diagnostic-only column encoding the
+    direction of the transition:
+        1 = clean -> clean (stayed eligible)
+        2 = clean -> fail  (scholarship loss; the actionable case)
+        3 = fail  -> clean (recovery)
+        4 = fail  -> fail  (stayed ineligible)
+    Used in reporting only; not a training target.
+    """
+    print(f"[3/5] Построение обучающих пар (сем N -> сем N+1)...")
 
     features_df = features_df.sort_values(["ЗачетнаяКнижка", "sem_num"])
     pairs_list = []
@@ -318,25 +344,31 @@ def build_pairs(features_df):
         grp = grp.sort_values("sem_num")
         sems = grp["sem_num"].values
         for i in range(len(sems) - 1):
+            # Skip non-consecutive semesters: a (sem 3, sem 5) jump would
+            # turn the row into a two-step prediction, which the features
+            # (aggregates of one semester) are not designed for.
             if sems[i + 1] - sems[i] == 1:
                 current = grp[grp["sem_num"] == sems[i]].iloc[0].to_dict()
                 next_clean = grp[grp["sem_num"] == sems[i + 1]].iloc[0]["clean_record"]
                 current["target_clean_next_sem"] = int(next_clean)
                 current["target_sem"] = int(sems[i + 1])
+                # Carry the current-sem clean status forward as a feature
+                # AND as the diagnostic `class_B` input below. It is the
+                # single strongest predictor of next-sem clean status.
                 current["had_clean_current_sem"] = int(current["clean_record"])
                 pairs_list.append(current)
 
     pairs_df = pd.DataFrame(pairs_list)
 
     def variant_b(p, n):
-        # p = had clean record in current sem, n = clean record in next sem
+        # p = had_clean_current_sem, n = target_clean_next_sem
         if p == 1 and n == 1:
-            return 1
+            return 1  # clean -> clean
         if p == 1 and n == 0:
-            return 2
+            return 2  # clean -> fail (scholarship loss)
         if p == 0 and n == 1:
-            return 3
-        return 4
+            return 3  # fail -> clean (recovery)
+        return 4      # fail -> fail
 
     pairs_df["class_B"] = [
         variant_b(p, n)
@@ -345,7 +377,7 @@ def build_pairs(features_df):
         )
     ]
 
-    print(f"  → {len(pairs_df):,} пар")
+    print(f"  -> {len(pairs_df):,} пар")
     print(
         f"  Чистый академический результат в след. семестре: "
         f"{pairs_df['target_clean_next_sem'].mean():.1%}"
@@ -387,7 +419,7 @@ def _prepare_features(pairs_df):
     y = pairs_df["target_clean_next_sem"].astype(int)
 
     # std_grade is genuinely undefined for single-graded-subject semesters
-    # (n=1 → std is mathematically undefined). Filling with 0 is fine here:
+    # (n=1 -> std is mathematically undefined). Filling with 0 is fine here:
     # a single value has zero variance.
     if "std_grade" in X.columns:
         X["std_grade"] = X["std_grade"].fillna(0)
@@ -484,7 +516,7 @@ def _run_baselines(pairs_df, test_mask):
     pred_rule = ((any_block_test == 0) & (any_retake_test == 0)).astype(int)
     baselines["rule_no_blocking"] = {
         "pred": pred_rule,
-        "desc": "No blocking grades & no retakes → clean next sem",
+        "desc": "No blocking grades & no retakes -> clean next sem",
     }
 
     for thr in [4.0, 4.2]:
@@ -492,7 +524,7 @@ def _run_baselines(pairs_df, test_mask):
         pred_gpa = ((~np.isnan(gpa_test)) & (gpa_test >= thr)).astype(int)
         baselines[f"gpa_{thr}"] = {
             "pred": pred_gpa,
-            "desc": f"GPA ≥ {thr} → clean next sem",
+            "desc": f"GPA >= {thr} -> clean next sem",
         }
 
     return baselines
@@ -514,7 +546,7 @@ def evaluate_and_save(
     prev = pairs_df["had_clean_current_sem"].values
     true_b = pairs_df["class_B"].values
 
-    # ── Predictions ──
+    # -- Predictions --
     X_test = X[test_mask].values
     y_test = y[test_mask].values
     prev_test = prev[test_mask]
@@ -523,16 +555,22 @@ def evaluate_and_save(
     y_pred = model.predict(X_test).astype(int)
     y_proba = model.predict_proba(X_test)[:, 1]
 
-    # Derive 4-class predictions
+    # Derive 4-class predictions by combining the binary model output
+    # with the known current-sem state. The 4 labels match CLASS_B_LABELS
+    # and the variant_b mapping in build_pairs; class 2 (clean -> fail)
+    # is the actionable scholarship-loss case the model is judged on.
+    # Note: prev_test (had_clean_current_sem) is OBSERVED, not predicted,
+    # so the 4-class prediction error mirrors the binary error exactly --
+    # there is no extra uncertainty added by this transformation.
     pred_b = np.zeros(len(y_pred), dtype=int)
-    had = prev_test == 1
-    pred_b[had & (y_pred == 1)] = 1
-    pred_b[had & (y_pred == 0)] = 2
-    no = prev_test == 0
-    pred_b[no & (y_pred == 1)] = 3
-    pred_b[no & (y_pred == 0)] = 4
+    had = prev_test == 1  # student had a clean current sem
+    pred_b[had & (y_pred == 1)] = 1  # clean -> clean
+    pred_b[had & (y_pred == 0)] = 2  # clean -> fail (scholarship loss)
+    no = prev_test == 0  # student did NOT have a clean current sem
+    pred_b[no & (y_pred == 1)] = 3  # fail  -> clean (recovery)
+    pred_b[no & (y_pred == 0)] = 4  # fail  -> fail
 
-    # ── Baselines ──
+    # -- Baselines --
     baselines = _run_baselines(pairs_df, test_mask)
 
     print(f"\n{'=' * 70}")
@@ -550,7 +588,7 @@ def evaluate_and_save(
             f"AUC={bl_auc:.3f}  | {bl['desc']}"
         )
 
-    # ── Model metrics ──
+    # -- Model metrics --
     acc = accuracy_score(y_test, y_pred)
     f1_macro = f1_score(y_test, y_pred, average="macro")
     auc = roc_auc_score(y_test, y_proba)
@@ -580,7 +618,7 @@ def evaluate_and_save(
     print("Confusion matrix (binary):")
     print(cm_df.to_string())
 
-    # ── 4-class metrics ──
+    # -- 4-class metrics --
     print(f"\nVariant B - 4 класса:")
     cm_b = confusion_matrix(true_b_test, pred_b, labels=[1, 2, 3, 4])
     cm_b_df = pd.DataFrame(
@@ -602,7 +640,7 @@ def evaluate_and_save(
                 f"{acc_cls:.1%} ({mask_cls.sum():,} cases)"
             )
 
-    # ── Per-subgroup report ──
+    # -- Per-subgroup report --
     for label, group_val in [
         ("Подгруппа «чистый результат сейчас» (had_clean=1)", 1),
         ("Подгруппа «не чистый сейчас» (had_clean=0)", 0),
@@ -621,9 +659,9 @@ def evaluate_and_save(
         except ValueError:
             sub_auc = 0.0
 
-        print(f"\n{'─' * 70}")
+        print(f"\n{'-' * 70}")
         print(f"  {label}")
-        print(f"{'─' * 70}")
+        print(f"{'-' * 70}")
         print(
             f"  Accuracy: {sub_acc:.1%} | F1 (macro): {sub_f1:.3f} | "
             f"AUC: {sub_auc:.3f}  (n={sub_mask.sum():,})"
@@ -637,7 +675,7 @@ def evaluate_and_save(
             )
         )
 
-    # ── Feature importance (permutation-based) ──
+    # -- Feature importance (permutation-based) --
     # HistGradientBoostingClassifier does NOT expose feature_importances_.
     # Permutation importance on the test set gives a model-agnostic measure
     # of each feature's contribution to ROC-AUC. n_repeats kept small (5)
@@ -659,7 +697,7 @@ def evaluate_and_save(
     for _, row in imp_df.iterrows():
         print(f"  {row['feature']:<40} {row['importance']:>8.4f}")
 
-    # ── Per-semester breakdown ──
+    # -- Per-semester breakdown --
     test_sems = pairs_df.loc[test_mask, "sem_num"].values
     print(f"\nПо семестрам:")
     for from_s in sorted(set(test_sems)):
@@ -673,11 +711,11 @@ def evaluate_and_save(
         else:
             auc_s = 0
         print(
-            f"  {int(from_s)}→{int(from_s) + 1}: "
+            f"  {int(from_s)}->{int(from_s) + 1}: "
             f"acc={acc_s:.1%}, AUC={auc_s:.3f}, n={mask_s.sum()}"
         )
 
-    # ── Save predictions ──
+    # -- Save predictions --
     # NOTE: prob_clean_next_sem is the model's probability that the student
     # will have a clean academic record in sem N+1 (which, by Russian rules,
     # entitles them to the stipend paid in N+2). The 'risk_score' column is
@@ -702,13 +740,13 @@ def evaluate_and_save(
     pred_df.to_csv(pred_csv, index=False, encoding="utf-8-sig")
     print(f"\n  Сохранено: {pred_csv}")
 
-    # ── Save model ──
+    # -- Save model --
     # HistGradientBoostingClassifier has no save_model() - use joblib.
     model_path = output_dir / "scholarship_model.joblib"
     joblib.dump(model, model_path)
     print(f"  Сохранено: {model_path}")
 
-    # ── Save summary ──
+    # -- Save summary --
     summary_path = output_dir / "summary.md"
     with open(summary_path, "w", encoding="utf-8") as f:
         f.write("# Scholarship Prediction - HistGradientBoosting\n\n")
@@ -763,7 +801,7 @@ def evaluate_and_save(
 
     print(f"  Сохранено: {summary_path}")
 
-    # ── Save model card ──
+    # -- Save model card --
     card = {
         "model_type": "HistGradientBoostingClassifier",
         "target": (
@@ -799,7 +837,7 @@ def evaluate_and_save(
         json.dump(card, f, ensure_ascii=False, indent=2)
     print(f"  Сохранено: {card_path}")
 
-    # ── Save human-readable report ──
+    # -- Save human-readable report --
     _save_human_report(
         output_dir=output_dir,
         acc=acc, f1_macro=f1_macro, auc=auc,
@@ -891,7 +929,7 @@ def _save_human_report(
     w("> в прогнозе). Поэтому модель - это раннее предупреждение на ")
     w("> один семестр вперёд.\n")
 
-    # ── Section 2: Data scope ──
+    # -- Section 2: Data scope --
     w("## На каких данных обучена модель\n")
     w(
         f"Модель обучена на данных **{train_mask.sum():,}** переходов между семестрами "
@@ -900,7 +938,7 @@ def _save_human_report(
         f"(**{len(test_students):,}** студентов) тестовые. "
     )
 
-    # ── Section 3: How well does it work? ──
+    # -- Section 3: How well does it work? --
     w("## Насколько точна модель\n")
     w(
         f"На проверочной выборке из {n_test:,} переходов модель дала правильный ответ "
@@ -917,7 +955,7 @@ def _save_human_report(
         f"F1 (macro) = **{f1_macro:.3f}**.\n"
     )
 
-    # ── Section 4: Transition analysis ──
+    # -- Section 4: Transition analysis --
     w("## Как модель работает по категориям студентов\n")
     w(
         "Каждый студент относится к одной из четырёх категорий по тому, был ли "
@@ -946,7 +984,7 @@ def _save_human_report(
             f"({caught_gained / actual_gained:.0%}).\n"
         )
 
-    # ── Section 5: Risk tiers ──
+    # -- Section 5: Risk tiers --
     w("## Распределение по уровням риска\n")
     w(
         "Модель присваивает каждому переходу вероятность того, что следующий семестр "
@@ -970,7 +1008,7 @@ def _save_human_report(
     )
     w("")
 
-    # ── Section 6: What matters most ──
+    # -- Section 6: What matters most --
     w("## Что больше всего влияет на прогноз\n")
     w(
         "Ниже перечислены пять факторов, которые модель считает наиболее "

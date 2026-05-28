@@ -1,6 +1,6 @@
-# Scholarship Prediction — HistGradientBoosting
+# Scholarship Prediction - HistGradientBoosting
 
-**Дата:** 2026-05-25 14:18
+**Дата:** 2026-05-28 08:26
 
 ## Данные
 
@@ -15,9 +15,9 @@
 |---|---|---|---|
 | majority | 57.5% | 0.365 | Always predict 0 |
 | persistence | 82.3% | 0.819 | Predict next clean = current clean (had_clean_current_sem) |
-| rule_no_blocking | 82.3% | 0.819 | No blocking grades & no retakes → clean next sem |
-| gpa_4.0 | 79.3% | 0.793 | GPA ≥ 4.0 → clean next sem |
-| gpa_4.2 | 81.8% | 0.815 | GPA ≥ 4.2 → clean next sem |
+| rule_no_blocking | 82.3% | 0.819 | No blocking grades & no retakes -> clean next sem |
+| gpa_4.0 | 79.3% | 0.793 | GPA >= 4.0 -> clean next sem |
+| gpa_4.2 | 81.8% | 0.815 | GPA >= 4.2 -> clean next sem |
 
 ## Метрики HistGradientBoosting
 
@@ -48,22 +48,22 @@
 Факт: чисто                135          861
 ```
 
-## Variant B — 4 класса
+## Variant B - 4 класса
 
 ```
-                     Пред: 1  Пред: 2  Пред: 3  Пред: 4
-Факт: Чисто→чисто        784        0        0        0
-Факт: Чисто→провал       200        3        0        0
-Факт: Провал→чисто         0        0       77      135
-Факт: Провал→провал        0        0       60     1084
+                      Пред: 1  Пред: 2  Пред: 3  Пред: 4
+Факт: Чисто->чисто        784        0        0        0
+Факт: Чисто->провал       200        3        0        0
+Факт: Провал->чисто         0        0       77      135
+Факт: Провал->провал        0        0       60     1084
 ```
 
 ## Per-class accuracy
 
-- **Чисто→чисто**: 100.0%
-- **Чисто→провал**: 1.5%
-- **Провал→чисто**: 36.3%
-- **Провал→провал**: 94.8%
+- **Чисто->чисто**: 100.0%
+- **Чисто->провал**: 1.5%
+- **Провал->чисто**: 36.3%
+- **Провал->провал**: 94.8%
 
 ## Feature importance (permutation, ROC-AUC)
 
