@@ -1,0 +1,59 @@
+{
+  "model_type": "HistGradientBoostingClassifier",
+  "slice": "bachelor sem 2 -> 3 (output_bachelors_both_sem2_3_ochnaya)",
+  "target": "Clean academic record in next semester (no blocking grades, no retakes). Under Russian academic rules, a clean record in sem N+1 entitles the student to the stipend paid in N+2.",
+  "features": [
+    "sem_num",
+    "n_subjects",
+    "n_blocks",
+    "n_retakes",
+    "any_block",
+    "any_retake",
+    "gpa_overall",
+    "min_grade",
+    "std_grade",
+    "share_5",
+    "share_3",
+    "share_zachet",
+    "had_clean_current_sem"
+  ],
+  "n_features": 13,
+  "n_train": 789,
+  "n_test": 198,
+  "n_iter": 146,
+  "metrics": {
+    "accuracy": 0.803,
+    "f1_macro": 0.8003,
+    "roc_auc": 0.8848
+  },
+  "baselines": {
+    "majority": {
+      "accuracy": 0.5758,
+      "description": "Always predict 0"
+    },
+    "persistence": {
+      "accuracy": 0.8131,
+      "description": "Predict next clean = current clean (had_clean_current_sem)"
+    },
+    "rule_no_blocking": {
+      "accuracy": 0.8131,
+      "description": "No blocking grades & no retakes -> clean next sem"
+    },
+    "gpa_4.0": {
+      "accuracy": 0.7626,
+      "description": "GPA >= 4.0 -> clean next sem"
+    },
+    "gpa_4.2": {
+      "accuracy": 0.8232,
+      "description": "GPA >= 4.2 -> clean next sem"
+    }
+  },
+  "variant_b_accuracy": {
+    "1": 0.9265,
+    "2": 0.1429,
+    "3": 0.3125,
+    "4": 0.9462
+  },
+  "random_seed": 42,
+  "date": "2026-05-28T08:51:34.369837"
+}
