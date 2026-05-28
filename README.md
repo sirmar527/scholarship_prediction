@@ -27,24 +27,24 @@
 
 ## Признаки (13)
 
-| Признак | Описание |
-|---|---|
-| `sem_num` | Номер семестра (1-10) |
-| `n_subjects` | Число дисциплин в семестре |
-| `n_blocks`, `any_block` | Количество и наличие блокирующих оценок |
-| `n_retakes`, `any_retake` | Количество и наличие пересдач |
-| `gpa_overall` | Средний балл по числовым оценкам |
-| `min_grade` | Минимальная оценка |
-| `std_grade` | Стандартное отклонение оценок |
+| Признак | Описание                                         |
+|---|--------------------------------------------------|
+| `sem_num` | Номер семестра (1-10)                            |
+| `n_subjects` | Число дисциплин в семестре                       |
+| `n_blocks`, `any_block` | Количество и наличие блокирующих оценок          |
+| `n_retakes`, `any_retake` | Количество и наличие пересдач                    |
+| `gpa_overall` | Средний балл по числовым оценкам                 |
+| `min_grade` | Минимальная оценка                               |
+| `std_grade` | Стандартное отклонение оценок                    |
 | `share_5`, `share_3` | Доли пятёрок и троек среди оцениваемых дисциплин |
-| `share_zachet` | Доля пас-фейл дисциплин в нагрузке |
-| `had_clean_current_sem` | Был ли чистым текущий семестр |
+| `share_zachet` | Доля зачётных дисциплин в нагрузке               |
+| `had_clean_current_sem` | Был ли чистым текущий семестр                    |
 
 ## Модели
 
-`scholarship_predict_histgb.py` -- основной скрипт. Обучает `sklearn.ensemble.HistGradientBoostingClassifier` с встроенным ранним остановом. Разбиение 80/20 по студентам (один студент не попадает одновременно в train и test). Permutation-importance используется как мера важности признаков. Результаты сохраняются в `outputs/histgb/`.
+`scholarship_predict_histgb.py` -- основной скрипт. Обучает `sklearn.ensemble.HistGradientBoostingClassifier` с встроенным ранней остановкой. Разбиение 80/20 по студентам. Permutation-importance используется как мера важности признаков.
 
-`scholarship_predict_histgb_bachelors_sem2_3.py` -- автономный дубликат основного скрипта (~1100 строк), адаптированный под срез `output_bachelors_both_sem2_3_ochnaya.xlsx`. Принимает те же флаги `--data` и `--output`. По умолчанию результаты сохраняются в `outputs/histgb_bachelors_sem2_3/`. Файл не импортирует канонический скрипт; изменения в логике канонического (правила загрузки, признаки, оценка) придётся переносить сюда вручную.
+`scholarship_predict_histgb_bachelors_sem2_3.py` -- дубликат основного скрипта, адаптированный под `output_bachelors_both_sem2_3_ochnaya.xlsx`.
 
 ## Метрики
 
@@ -56,7 +56,7 @@
 | F1 (macro) | 0.830 |
 | ROC-AUC | 0.914 |
 
-Сильнейший baseline на той же выборке: accuracy ~82.3 % (правило «следующий семестр будет таким же, как текущий»). Полные таблицы (confusion matrix, разбивка по семестрам, 4-классовая транзиция Чисто/Провал × Чисто/Провал) находятся в `outputs/histgb/summary.md`.
+Лучший baseline на той же выборке: accuracy ~82.3 % (по правилу "следующий семестр будет таким же, как текущий"). Полные таблицы (confusion matrix, разбивка по семестрам, 4-классовая транзиция Чисто/Провал × Чисто/Провал) находятся в `outputs/histgb/summary.md`.
 
 Срез бакалавриата 2 -> 3 (test: 198 пар, train: 789 пар):
 
@@ -66,7 +66,7 @@
 | F1 (macro) | 0.800 |
 | ROC-AUC | 0.885 |
 
-Сильнейший baseline на этом срезе: accuracy 82.3 % (правило `gpa >= 4.2`). Модель уступает простой эвристике; это свойство малой выборки и одного направления перехода 2 -> 3, а не баг. Полные таблицы в `outputs/histgb_bachelors_sem2_3/summary.md`.
+Лучший baseline на этом срезе: accuracy 82.3 % (правило `gpa >= 4.2`). Полные таблицы в `outputs/histgb_bachelors_sem2_3/summary.md`.
 
 ## Запуск
 
@@ -80,7 +80,7 @@ python scholarship_predict_histgb_bachelors_sem2_3.py      # срез бакал
 
 ## Документация
 
-Полное описание архитектуры конвейера, обработки данных, гиперпараметров и решений по дизайну приведено в [`technical_report.md`](technical_report.md).
+Полное описание архитектуры приведено в [`technical_report.md`](technical_report.md).
 
 ## Структура
 
@@ -89,7 +89,7 @@ data/                                              входные xlsx
 outputs/histgb/                                    результаты основного скрипта
 outputs/histgb_bachelors_sem2_3/                   результаты дубликата
 scholarship_predict_histgb.py                      основной скрипт
-scholarship_predict_histgb_bachelors_sem2_3.py     автономный дубликат для среза 2 -> 3
-requirements.txt                                   зафиксированные версии deps
-technical_report.md                                подробный технический отчёт
+scholarship_predict_histgb_bachelors_sem2_3.py     дубликат для среза 2 -> 3
+requirements.txt                                   зависимости
+technical_report.md                                тех. отчёт
 ```
