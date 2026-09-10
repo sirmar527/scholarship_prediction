@@ -17,3 +17,7 @@ catboost_info/
 # Legacy (non-canonical) models and their outputs
 legacy/
 outputs/legacy/
+
+# Kept local for now; to be added to the repo later
+run_local.ps1
+app/tests/test_*.py

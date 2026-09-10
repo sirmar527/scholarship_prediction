@@ -1,9 +1,14 @@
+# Тема «обложка зачетки»: темно-синий переплет, бумажный текст, латунное тиснение
+# для всего, что можно нажать. Цвета зон - тушь штампов: зеленая, охра, красная.
+#
+# Секции [server] здесь намеренно нет: этот файл читается и Streamlit Community Cloud.
+# Локальная привязка к localhost задаётся флагами в run_local.ps1.
 [theme]
 base = "dark"
-primaryColor = "#D4B26A"
-backgroundColor = "#182440"
-secondaryBackgroundColor = "#223154"
-textColor = "#EDE7D8"
+primaryColor = "#D4B26A"              # тиснение: кнопки, фокус, ссылки
+backgroundColor = "#182440"           # переплет
+secondaryBackgroundColor = "#223154"  # форзац: поля ввода, шапки таблиц
+textColor = "#EDE7D8"                 # бумага
 linkColor = "#D4B26A"
 borderColor = "#33456B"
 dataframeBorderColor = "#33456B"
@@ -12,6 +17,7 @@ buttonRadius = "4px"
 font = "IBM Plex Sans:https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&display=swap, sans-serif"
 headingFont = "PT Serif:https://fonts.googleapis.com/css2?family=PT+Serif:wght@400;700&display=swap, serif"
 headingFontWeights = [700, 700, 600]
+# палитра st.metric / статусов под темный фон
 greenColor = "#8ED08F"
 yellowColor = "#E7BE5C"
 orangeColor = "#E7BE5C"
