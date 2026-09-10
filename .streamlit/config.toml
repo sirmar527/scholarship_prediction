@@ -1,0 +1,26 @@
+[theme]
+base = "dark"
+primaryColor = "#D4B26A"
+backgroundColor = "#182440"
+secondaryBackgroundColor = "#223154"
+textColor = "#EDE7D8"
+linkColor = "#D4B26A"
+borderColor = "#33456B"
+dataframeBorderColor = "#33456B"
+baseRadius = "4px"
+buttonRadius = "4px"
+font = "IBM Plex Sans:https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&display=swap, sans-serif"
+headingFont = "PT Serif:https://fonts.googleapis.com/css2?family=PT+Serif:wght@400;700&display=swap, serif"
+headingFontWeights = [700, 700, 600]
+greenColor = "#8ED08F"
+yellowColor = "#E7BE5C"
+orangeColor = "#E7BE5C"
+redColor = "#EB8A7E"
+
+[theme.sidebar]
+backgroundColor = "#223154"
+secondaryBackgroundColor = "#182440"
+borderColor = "#33456B"
+
+[browser]
+gatherUsageStats = false
