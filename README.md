@@ -1,5 +1,7 @@
 # Scholarship Prediction
 
+This readme is currently outdated.
+
 **EN.** This is a university project.
 
 Binary classifier predicting whether a Russian-university student will maintain a clean academic record (no blocking grades, no retakes) in the next semester. Dataset: anonymised grade-level data conforming to ГОСТ Р 70946-2023, Приложение 8.
